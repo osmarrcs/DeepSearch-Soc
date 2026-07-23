@@ -1,0 +1,406 @@
+openapi: 3.1.0
+info:
+  # Do not change the title, if the title changes, the import paths will be broken
+  title: Api
+  version: 0.1.0
+  description: CVE Vulnerability Scanner API
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: technologies
+    description: Technology ecosystem
+  - name: vulnerabilities
+    description: Vulnerability management
+  - name: scans
+    description: Scan operations
+  - name: stats
+    description: Dashboard statistics
+
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      description: Returns server health status
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  /technologies:
+    get:
+      operationId: listTechnologies
+      tags: [technologies]
+      summary: List all available technologies
+      responses:
+        "200":
+          description: List of technologies
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Technology"
+
+  /vulnerabilities:
+    get:
+      operationId: listVulnerabilities
+      tags: [vulnerabilities]
+      summary: List vulnerabilities with optional filters
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pendente, processado, adiado, descartado]
+        - name: tech
+          in: query
+          schema:
+            type: string
+        - name: source
+          in: query
+          schema:
+            type: string
+        - name: scanId
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of vulnerabilities
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Vulnerability"
+
+  /vulnerabilities/{id}:
+    get:
+      operationId: getVulnerability
+      tags: [vulnerabilities]
+      summary: Get a single vulnerability
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Vulnerability detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Vulnerability"
+        "404":
+          description: Not found
+
+  /vulnerabilities/{id}/triage:
+    patch:
+      operationId: triageVulnerability
+      tags: [vulnerabilities]
+      summary: Set triage decision on a vulnerability
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TriageInput"
+      responses:
+        "200":
+          description: Updated vulnerability
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Vulnerability"
+        "404":
+          description: Not found
+
+  /vulnerabilities/{id}/report:
+    get:
+      operationId: getVulnerabilityReport
+      tags: [vulnerabilities]
+      summary: Generate HTML report for a vulnerability (Tenable-style)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: HTML report content
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VulnerabilityReport"
+        "404":
+          description: Not found
+
+  /scans:
+    get:
+      operationId: listScans
+      tags: [scans]
+      summary: List all scans
+      responses:
+        "200":
+          description: List of scans
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Scan"
+    post:
+      operationId: createScan
+      tags: [scans]
+      summary: Start a new vulnerability scan
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScanInput"
+      responses:
+        "201":
+          description: Scan created and started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Scan"
+
+  /scans/{id}:
+    get:
+      operationId: getScan
+      tags: [scans]
+      summary: Get scan status and results
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Scan detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Scan"
+        "404":
+          description: Not found
+
+  /stats:
+    get:
+      operationId: getStats
+      tags: [stats]
+      summary: Get dashboard statistics
+      responses:
+        "200":
+          description: Dashboard stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Stats"
+
+  /stats/by-tech:
+    get:
+      operationId: getStatsByTech
+      tags: [stats]
+      summary: Get vulnerability counts grouped by technology
+      responses:
+        "200":
+          description: Stats by technology
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TechStat"
+
+  /stats/by-source:
+    get:
+      operationId: getStatsBySource
+      tags: [stats]
+      summary: Get vulnerability counts grouped by source
+      responses:
+        "200":
+          description: Stats by source
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SourceStat"
+
+  /stats/recent:
+    get:
+      operationId: getRecentVulnerabilities
+      tags: [stats]
+      summary: Get the most recently found vulnerabilities
+      responses:
+        "200":
+          description: Recent vulnerabilities
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Vulnerability"
+
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required:
+        - status
+
+    Technology:
+      type: object
+      required: [id, name, category]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        category:
+          type: string
+
+    Vulnerability:
+      type: object
+      required: [id, cveId, tech, description, solution, cvss, source, status, foundAt]
+      properties:
+        id:
+          type: integer
+        cveId:
+          type: string
+        tech:
+          type: string
+        description:
+          type: string
+        solution:
+          type: string
+        cvss:
+          type: string
+        source:
+          type: string
+        status:
+          type: string
+          enum: [pendente, processado, adiado, descartado]
+        foundAt:
+          type: string
+        scanId:
+          type: ["integer", "null"]
+        triageNote:
+          type: ["string", "null"]
+
+    TriageInput:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [processado, adiado, descartado]
+        triageNote:
+          type: string
+
+    VulnerabilityReport:
+      type: object
+      required: [html, vulnerability]
+      properties:
+        html:
+          type: string
+        vulnerability:
+          $ref: "#/components/schemas/Vulnerability"
+
+    Scan:
+      type: object
+      required: [id, status, startedAt, technologies, totalFound]
+      properties:
+        id:
+          type: integer
+        status:
+          type: string
+          enum: [em_andamento, concluido, erro]
+        startedAt:
+          type: string
+        completedAt:
+          type: ["string", "null"]
+        technologies:
+          type: array
+          items:
+            type: string
+        totalFound:
+          type: integer
+
+    ScanInput:
+      type: object
+      required: [technologies]
+      properties:
+        technologies:
+          type: array
+          items:
+            type: string
+          minItems: 1
+
+    Stats:
+      type: object
+      required: [total, pendentes, processados, adiados, descartados, criticos, altos, medios, baixos, totalScans]
+      properties:
+        total:
+          type: integer
+        pendentes:
+          type: integer
+        processados:
+          type: integer
+        adiados:
+          type: integer
+        descartados:
+          type: integer
+        criticos:
+          type: integer
+        altos:
+          type: integer
+        medios:
+          type: integer
+        baixos:
+          type: integer
+        totalScans:
+          type: integer
+
+    TechStat:
+      type: object
+      required: [tech, total, pendentes]
+      properties:
+        tech:
+          type: string
+        total:
+          type: integer
+        pendentes:
+          type: integer
+
+    SourceStat:
+      type: object
+      required: [source, total]
+      properties:
+        source:
+          type: string
+        total:
+          type: integer
