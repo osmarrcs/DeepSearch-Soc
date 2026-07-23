@@ -1,0 +1,29 @@
+Prezados,
+
+Durante as atividades de monitoramento de infraestrutura e análise de inteligência técnica, compilamos um boletim focado em uma vulnerabilidade identificada no compactador de arquivos 7-Zip.
+
+Resumo do Alerta:
+
+Data da compilação: 20 de julho de 2026
+
+Tipo de evento: Estouro de Buffer Baseado em Heap (Heap-based Buffer Overflow).
+
+Impacto técnico: A exploração dessa anomalia permite que um atacante execute código arbitrário com os mesmos privilégios do usuário ativo no sistema, caso a vítima seja induzida a abrir um arquivo manipulado.
+
+Detalhes Técnicos da Ameaça (CVE-2026-14266):
+
+Classificação Base: Alta. Apesar de publicações categorizarem o impacto como crítico devido ao risco de execução remota de código, a avaliação técnica pelo índice CVSS base é 7.0 (vetor local) , .
+
+Versões Afetadas: O software 7-Zip em versões anteriores à compilação 26.02 , .
+
+Mecânica da Exploração: A vulnerabilidade reside na rotina de processamento de dados compactados particionados no formato XZ , . Devido a falhas no controle lógico do espaço disponível durante o processo de descompressão, um arquivo com dados XZ formatados de maneira anômala pode forçar o mecanismo a gravar informações além dos limites do buffer de saída alocado na memória (heap) . Como a exploração não ocorre de forma autônoma (via rede sem interação), ela depende estritamente da interação do usuário, como abrir um anexo forjado recebido via e-mail ou engenharia social, para acionar a execução do código no contexto do processo em andamento .
+
+Recomendações e Ações de Mitigação:
+
+Atualização de Software: Recomenda-se o planejamento e a distribuição da versão 26.02 do 7-Zip para os endpoints corporativos. Uma vez que o utilitário não possui funcionalidade nativa de atualização automática em segundo plano (auto-update).
+
+Fontes e Referências Técnicas:
+Zero Day Initiative (ZDI-26-444 / CVE-2026-14266):(https://www.zerodayinitiative.com/advisories/ZDI-26-444/) ``
+The Hacker News - New 7-Zip Vulnerability: https://thehackernews.com/ ``
+IT-Connect - 7-Zip Vulnerability: https://www.it-connect.tech/7-zip-vulnerability-why-you-should-install-version-26-02-now/ ``
+Cyber Security Brazil - Falha crítica no 7-Zip permite execução remota de código:(https://www.cybersecbrazil.com.br/post/falha-cr%C3%ADtica-no-7-zip-permite-execu%C3%A7%C3%A3o-remota-de-c%C3%B3digo-atualiza%C3%A7%C3%A3o-para-a-vers%C3%A3o-26-02-corrige-o)

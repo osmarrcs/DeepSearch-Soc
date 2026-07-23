@@ -1,0 +1,320 @@
+import requests
+import json
+import time
+from datetime import datetime, timedelta, timezone
+import ipywidgets as widgets
+from IPython.display import display, clear_output, HTML
+
+# 1. Banco de Dados Local (Evita repetição de alertas)
+DB_FILE = 'historico_cves_tenable.json'
+
+def load_db():
+    try:
+        with open(DB_FILE, 'r') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {"processadas": [], "adiadas": []}
+
+def save_db(db):
+    with open(DB_FILE, 'w') as f:
+        json.dump(db, f)
+
+db = load_db()
+
+# 2. Ecossistema de Ativos (Mapeamento Completo do seu Ambiente)
+AMBIENTES = (
+    # Infraestrutura
+    'Fortigate', 'Fortinet Manager', 'Fortinet Analiser', 'Fortinet EMS',
+    'Cisco Antispam', 'Senha Segura PAM', 'F5 Big IP WAF', 'AWS', 'Openshift', 'Microsoft', 'VMware',
+    'Network Devices', 'Operating Systems', 'Cloud Platforms', 'Virtualization Software',
+    # Sistemas de Produção
+    'Git', 'Ansible', 'Kubernetes', 'CI/CD Tools', 'Containers', 'Orchestration Platforms',
+    # Banco de Dados
+    'Oracle', 'PostgreSQL', 'MySQL', 'SQL Server', 'MongoDB', 'Redis',
+    # Navegadores
+    'Google Chrome', 'Mozilla Firefox', 'Microsoft Edge', 'Safari', 'Brave', 'Opera',
+    # Aplicações Comuns/Desenvolvimento
+    'WinZip', '7-Zip', 'OBS Studio', 'Docker', 'Visual Studio Code', 'JetBrains IDEs', 'npm', 'Python Packages',
+    'Development Tools', 'Productivity Software', 'File Archivers', 'Streaming Software'
+)
+
+# 3. Motores de Agregação Pública e Deep Research (Sem uso de Tokens)
+def buscar_cisa_kev(tecnologia):
+    url = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
+    resultados = []
+    try:
+        resp = requests.get(url, timeout=10)
+        if resp.status_code == 200:
+            dados = resp.json()
+            for vuln in dados.get("vulnerabilities", []):
+                data_add = datetime.strptime(vuln.get("dateAdded"), "%Y-%m-%d")
+                if (datetime.now() - data_add).days <= 30:
+                    if tecnologia.lower() in vuln.get("vendorProject", "").lower() or tecnologia.lower() in vuln.get("product", "").lower():
+                        resultados.append({
+                            "id": vuln.get("cveID"),
+                            "tech": tecnologia,
+                            "desc": vuln.get("shortDescription"),
+                            "solucao": vuln.get("requiredAction"),
+                            "cvss": "N/D (Exploração Ativa)",
+                            "fonte": "CISA KEV"
+                        })
+    except Exception:
+        pass
+    return resultados
+
+def buscar_osv_dev(tecnologia):
+    url = "https://api.osv.dev/v1/query"
+    payload = {"package": {"name": tecnologia.lower()}}
+    resultados = []
+    try:
+        resp = requests.post(url, json=payload, timeout=10)
+        if resp.status_code == 200:
+            dados = resp.json()
+            for vuln in dados.get("vulns", [])[:2]:
+                resultados.append({
+                    "id": vuln.get("id", "OSV-VULN"),
+                    "tech": tecnologia,
+                    "desc": vuln.get("details", vuln.get("summary", "Detalhes técnicos fornecidos na base OSV.")),
+                    "solucao": "Atualizar biblioteca/pacote afetado no repositório.",
+                    "cvss": "N/D",
+                    "fonte": "OSV.dev (Open Source)"
+                })
+    except Exception:
+        pass
+    return resultados
+
+def buscar_circl(tecnologia):
+    # Consulta a base europeia CIRCL
+    url = f"https://cve.circl.lu/api/search/{tecnologia.lower()}"
+    resultados = []
+    try:
+        resp = requests.get(url, timeout=10)
+        if resp.status_code == 200:
+            dados = resp.json()
+            for vuln in dados.get("data", [])[:2]:
+                resultados.append({
+                    "id": vuln.get("id"),
+                    "tech": tecnologia,
+                    "desc": vuln.get("summary", "Sem descrição disponível."),
+                    "solucao": "Verificar boletins do fabricante.",
+                    "cvss": str(vuln.get("cvss", "N/D")),
+                    "fonte": "CIRCL CVE Search"
+                })
+    except Exception:
+        pass
+    return resultados
+
+def buscar_nvd(tecnologia, dias=2):
+    hoje = datetime.now(timezone.utc)
+    inicio = hoje - timedelta(days=dias)
+    url = "https://services.nvd.nist.gov/rest/json/cves/2.0"
+    params = {
+        "pubStartDate": inicio.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+        "pubEndDate": hoje.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+        "keywordSearch": tecnologia,
+        "resultsPerPage": 2
+    }
+    resultados = []
+    try:
+        time.sleep(6) # Pausa obrigatória para IP sem token no NVD (Evita bloqueio 403)
+        resp = requests.get(url, params=params, timeout=15)
+        if resp.status_code == 200:
+            dados = resp.json()
+            for item in dados.get("vulnerabilities", []):
+                cve = item.get("cve", {})
+                cvss = "N/D"
+                metrics = cve.get("metrics", {})
+                if "cvssMetricV31" in metrics:
+                    cvss = str(metrics["cvssMetricV31"].get("cvssData", {}).get("baseScore", "N/D"))
+
+                desc = cve.get("descriptions", [{}])[0].get("value", "Sem descrição disponível.")
+                resultados.append({
+                    "id": cve.get("id"),
+                    "tech": tecnologia,
+                    "desc": desc,
+                    "solucao": "Aplicar atualizações de segurança fornecidas pelo fabricante ou rotacionar credenciais afetadas.",
+                    "cvss": cvss,
+                    "fonte": "NVD / NIST"
+                })
+    except Exception:
+        pass
+    return resultados
+
+# 4. Template HTML (Estilo Exato do Tenable One)
+def gerar_html_tenable(cve_dict):
+    html_content = f"""
+    <div style="font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #333; line-height: 1.5; max-width: 900px; margin: 20px auto; border: 1px solid #e0e0e0; padding: 30px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); background-color: #fff;">
+        <h1 style="font-size: 24px; color: #1a1a1a; border-bottom: 1px solid #eaeaea; padding-bottom: 15px; margin-top: 0;">Modelos de Relatório <span style="color:#888;">&#128438;</span></h1>
+
+        <p style="font-size: 14px;">O Tenable One Vulnerability Management fornece uma seleção de modelos de relatório e formatos de relatório personalizáveis. Você pode configurar um modelo de relatório fornecido pela Tenable ou criar um relatório totalmente personalizado a partir de um dos formatos disponíveis.</p>
+        <p style="font-size: 14px;">Para um índice completo dos modelos de relatório fornecidos pela Tenable, consulte <a href="#" style="color: #007bc1; text-decoration: none;">Modelos de Relatório do Tenable One Vulnerability Management</a>.</p>
+
+        <div style="background-color: #eaffea; border-left: 4px solid #00d282; padding: 12px 15px; margin: 20px 0; font-size: 13px;">
+            <p style="margin: 0;"><strong>Dica:</strong> Para obter mais informações sobre os dados específicos incluídos em cada relatório individual, consulte <a href="#" style="color: #007bc1; text-decoration: none;">Exibir Detalhes do Relatório</a>.</p>
+        </div>
+
+        <div style="background-color: #f4f8fd; border-left: 4px solid #007bc1; padding: 15px; margin: 20px 0; font-size: 13px;">
+            <p style="margin-top: 0;">Nota: O <strong>Relatório de Seguro Cibernético</strong> inclui as seguintes ressalvas:</p>
+            <ul style="padding-left: 20px; margin-bottom: 10px;">
+                <li style="margin-bottom: 6px;">O relatório não pode ser editado de forma alguma. Isso garante que os subscritores possam ter certeza de que suas métricas são 100% precisas.</li>
+                <li style="margin-bottom: 6px;">Este relatório inclui apenas dados do Explore dos últimos 180 dias.</li>
+                <li style="margin-bottom: 6px;">Este relatório está disponível apenas para clientes com relatórios do Explore habilitados em seu contêiner.</li>
+                <li style="margin-bottom: 6px;">O nome do relatório não muda nas gerações subsequentes do relatório. Por exemplo, o carimbo de data/hora no nome do relatório não é atualizado na próxima vez que você executar o relatório, no entanto, os dados do relatório em si incluem a data em que o relatório foi executado mais recentemente.</li>
+                <li>As severidades são relatadas usando apenas pontuações base CVSSv3.</li>
+            </ul>
+            <p style="margin-bottom: 0;">Para mais informações, consulte a postagem do blog <a href="#" style="color: #007bc1; text-decoration: none;">Relatório de Seguro Cibernético</a>.</p>
+        </div>
+
+        <div style="margin: 30px 0; padding: 20px; border: 1px solid #dcdcdc; border-radius: 4px; background-color: #fbfbfb;">
+            <h2 style="font-size: 18px; margin-top: 0; color: #005a8c;">Detalhes da Ameaça: {cve_dict['id']} ({cve_dict['tech']})</h2>
+            <p style="font-size: 14px;"><strong>Fonte de Inteligência:</strong> {cve_dict['fonte']}</p>
+            <p style="font-size: 14px;"><strong>Descrição:</strong> {cve_dict['desc']}</p>
+            <p style="font-size: 14px;"><strong>Mitigação Sugerida:</strong> {cve_dict['solucao']}</p>
+            <p style="font-size: 14px;"><strong>Base Score CVSSv3:</strong> <span style="background-color: #e53935; color: #fff; padding: 2px 6px; border-radius: 3px; font-weight: bold;">{cve_dict['cvss']}</span></p>
+        </div>
+
+        <hr style="border: 0; border-top: 1px solid #eaeaea; margin: 30px 0;">
+
+        <p style="font-size: 14px;">Você pode compartilhar modelos de relatório com outros usuários dentro da organização.</p>
+        <p style="font-size: 14px;">Para compartilhar modelos de relatório:</p>
+        <ol style="font-size: 14px; padding-left: 20px;">
+            <li style="margin-bottom: 10px;">Na navegação à esquerda, clique em <strong>&#128196; Relatórios</strong>.<br>A página Relatórios é exibida.</li>
+            <li>Selecione os modelos de relatório que você deseja compartilhar:</li>
+        </ol>
+
+        <table style="width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 13px;">
+            <thead>
+                <tr style="background-color: #1a2228; color: #fff;">
+                    <th style="padding: 12px; text-align: left; border: 1px solid #1a2228; width: 25%;">Escopo</th>
+                    <th style="padding: 12px; text-align: left; border: 1px solid #1a2228; width: 75%;">Ação</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td style="padding: 15px; border: 1px solid #ddd; vertical-align: top; background-color: #fafafa;">Compartilhar um único relatório</td>
+                    <td style="padding: 15px; border: 1px solid #ddd; vertical-align: top;">
+                        <p style="margin-top: 0;">Para compartilhar modelos de relatório a partir da página <strong>Relatórios</strong>:</p>
+                        <ol type="a" style="padding-left: 20px;">
+                            <li style="margin-bottom: 12px;">
+                                Na guia <strong>Meus Modelos de Relatório</strong>, clique com o botão direito na linha do modelo de relatório que você deseja compartilhar.<br><br>
+                                -ou-<br><br>
+                                Na guia <strong>Meus Modelos de Relatório</strong>, na coluna <strong>Ações</strong>, clique no botão <strong>&#8942;</strong> na linha do modelo de relatório que deseja compartilhar.<br>
+                                Os botões de ação aparecem na linha.<br><br>
+                                -ou-<br><br>
+                                Na guia <strong>Meus Modelos de Relatório</strong>, marque a caixa de seleção ao lado do modelo de relatório que você deseja compartilhar.<br>
+                                Na barra de ações, o Tenable One Vulnerability Management habilita <strong>Mais > Compartilhar</strong>.
+                            </li>
+                            <li>Clique em <strong>&#10150; Compartilhar</strong>.</li>
+                        </ol>
+                        <p style="margin-bottom: 0;">O painel Compartilhar aparece.</p>
+
+                        <div style="border: 1px solid #e0e0e0; padding: 15px; margin-top: 15px; border-radius: 4px; background-color: #fff; width: 250px;">
+                            <strong style="display:block; margin-bottom: 10px;">Compartilhar</strong>
+                            <p style="font-size: 11px; color: #666; margin-bottom: 15px; background-color: #e6f2f9; padding: 8px; border-left: 3px solid #007bc1;">
+                                Cuidado: Você está compartilhando um modelo de relatório com um usuário que pode usá-lo para gerar relatórios. Quaisquer alterações feitas no modelo não refletirão no modelo compartilhado.
+                            </p>
+                            <span style="font-size: 10px; color: #888; text-transform: uppercase;">SELECIONAR USUÁRIOS OU GRUPOS</span><br>
+                            <label style="font-size: 12px;"><input type="checkbox" checked> Todos os Usuários</label><br>
+                            <input type="text" placeholder="Pesquisar por usuário ou nome do grupo" style="width: 100%; padding: 5px; margin-top: 5px; border: 1px solid #ccc; border-radius: 3px; font-size: 12px;">
+                        </div>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+
+        <ol start="3" style="font-size: 14px; padding-left: 20px;">
+            <li style="margin-bottom: 10px;">Na seção <strong>Selecionar Usuários ou Grupos</strong>, selecione <strong>Todos os Usuários</strong> ou pesquise usuários ou grupos específicos.</li>
+            <li style="margin-bottom: 10px;">Clique em <strong>Compartilhar</strong>.</li>
+        </ol>
+        <p style="font-size: 14px; color: #555;">O Tenable One Vulnerability Management compartilha o modelo de relatório com os usuários que podem visualizá-los na guia <strong>Modelos de Relatório Compartilhados</strong>. Cada usuário recebe uma notificação por e-mail com detalhes do relatório compartilhado, o endereço de e-mail do remetente e um link para o relatório compartilhado.</p>
+    </div>
+    """
+    return html_content
+
+# 5. Interface Interativa
+out = widgets.Output()
+lbl_titulo = widgets.HTML("<h2>Deep Research de Vulnerabilidades (Multi-bases)</h2>")
+
+# Cria uma interface limpa onde você pode selecionar todos (CTRL+A) ou específicos
+seletor_ambientes = widgets.SelectMultiple(
+    options=AMBIENTES,
+    value=list(AMBIENTES), # Já vem com todos selecionados por padrão
+    description='Sistemas:',
+    disabled=False,
+    layout=widgets.Layout(width='50%', height='300px')
+)
+
+btn_buscar = widgets.Button(description="Iniciar Varredura Profunda", button_style='primary')
+
+def gerar_sugestao(cvss):
+    try:
+        if float(cvss) >= 9.0: return "Ação Emergencial Recomendada"
+        if float(cvss) >= 7.0: return "Aplicar Correção na próxima janela"
+    except:
+        pass
+    return "Monitorar e Planejar Atualização"
+
+def on_btn_buscar_clicked(b):
+    with out:
+        clear_output()
+        selecionados = seletor_ambientes.value
+        print(f"Iniciando varredura em NVD, CISA KEV, CIRCL e OSV.dev para {len(selecionados)} tecnologias.")
+        print("Aguarde... As pausas entre as requisições (rate-limit) previnem o bloqueio do seu Colab.\n")
+
+        cves_encontradas = []
+        for tech in selecionados:
+            resultados = buscar_cisa_kev(tech) + buscar_osv_dev(tech) + buscar_circl(tech) + buscar_nvd(tech)
+            for cve in resultados:
+                if cve['id'] not in db["processadas"]:
+                    if not any(d['id'] == cve['id'] for d in cves_encontradas):
+                        cves_encontradas.append(cve)
+
+        clear_output()
+        if not cves_encontradas:
+            print("✅ Nenhuma vulnerabilidade nova não tratada para os sistemas selecionados hoje.")
+            return
+
+        print(f"⚠️ {len(cves_encontradas)} vulnerabilidades encontradas aguardando triagem.\n")
+
+        for cve in cves_encontradas:
+            display(HTML(f"<h3>{cve['id']} ({cve['tech']})</h3>"))
+            display(HTML(f"<b>CVSS:</b> {cve['cvss']} | <b>Fonte:</b> {cve['fonte']} | <i>{gerar_sugestao(cve['cvss'])}</i>"))
+            display(HTML(f"<b>Descrição:</b> {cve['desc']} ")) # Added description display during triage
+
+            acao = widgets.RadioButtons(
+                options=['Processar', 'Adiar', 'Descartar'],
+                description='Decisão:',
+                layout=widgets.Layout(width='100%')
+            )
+            btn_aplicar = widgets.Button(description="Confirmar", button_style='info')
+
+            def criar_callback(cve_dict, acao_widget):
+                def aplicar(b):
+                    escolha = acao_widget.value
+                    cve_id = cve_dict['id']
+
+                    if "Processar" in escolha or "Descartar" in escolha:
+                        if cve_id not in db["processadas"]:
+                            db["processadas"].append(cve_id)
+                            if cve_id in db["adiadas"]:
+                                db["adiadas"].remove(cve_id)
+                    elif "Adiar" in escolha:
+                        if cve_id not in db["adiadas"]:
+                            db["adiadas"].append(cve_id)
+
+                    save_db(db)
+                    b.description = "Registrado!"
+                    b.button_style = 'success'
+                    b.disabled = True
+
+                    if "Processar" in escolha:
+                        display(HTML(gerar_html_tenable(cve_dict)))
+
+                return aplicar
+
+            btn_aplicar.on_click(criar_callback(cve, acao))
+            display(acao, btn_aplicar)
+            display(HTML("<hr>"))
+
+btn_buscar.on_click(on_btn_buscar_clicked)
+display(lbl_titulo, seletor_ambientes, btn_buscar, out)
