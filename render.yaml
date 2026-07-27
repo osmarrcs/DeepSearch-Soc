@@ -3,7 +3,7 @@
 # e VITE_API_URL (URL pública do web service) no static site.
 services:
   - type: web
-    name: deepsearch-soc-api
+    name: deepsearch-soc-prod-api
     runtime: node
     plan: free
     rootDir: .
@@ -16,10 +16,10 @@ services:
       - key: DATABASE_URL
         sync: false            # preencher no dashboard do Render
       - key: CORS_ORIGIN
-        sync: false            # ex: https://deepsearch-soc-web.onrender.com
+        sync: false            # ex: https://deepsearch-soc-prod-web.onrender.com
 
   - type: web
-    name: deepsearch-soc-web
+    name: deepsearch-soc-prod-web
     runtime: static
     rootDir: artifacts/cve-dashboard
     buildCommand: corepack enable && pnpm install --frozen-lockfile --dir ../.. && pnpm --filter @workspace/cve-dashboard build
@@ -30,4 +30,4 @@ services:
         destination: /index.html
     envVars:
       - key: VITE_API_URL
-        sync: false            # ex: https://deepsearch-soc-api.onrender.com
+        sync: false            # ex: https://deepsearch-soc-prod-api.onrender.com

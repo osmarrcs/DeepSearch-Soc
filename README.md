@@ -42,7 +42,7 @@ Monorepo **pnpm workspaces**. Backend e frontend compartilham contratos tipados 
 **Pré-requisitos:** Node 20+, pnpm 9+ (`corepack enable`), banco Postgres (Supabase grátis serve).
 
 ```bash
-git clone https://github.com/SEU_USUARIO/DeepSearch-Soc.git
+git clone https://github.com/osmarrcs/DeepSearch-Soc.git
 cd DeepSearch-Soc
 cp .env.example .env         # preencha DATABASE_URL
 pnpm install

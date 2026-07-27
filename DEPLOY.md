@@ -1,103 +1,163 @@
-# DEPLOY — Data-Extractor (Supabase + Render)
+# DEPLOY — DeepSearch-Soc (Supabase + Render)
 
-Guia rápido pra rodar do zero. **Banco:** Supabase (Postgres gerenciado, plano free — mais fácil que Neon pra começar). **Hospedagem:** Render (API como Web Service, dashboard como Static Site).
-
----
-
-## 1. Criar o banco na Supabase (grátis)
-
-1. Cria projeto em https://supabase.com → **New project**.
-2. Anota a senha do Postgres (única vez que aparece).
-3. Menu **Project Settings → Database → Connection string → URI** e escolhe a aba **Transaction pooler** (porta 6543). Copia a URL.
-4. Adiciona `?sslmode=require` no final se ainda não tiver.
-
-Vai ficar algo tipo:
-```
-postgres://postgres.xxxx:SUA_SENHA@aws-0-sa-east-1.pooler.supabase.com:6543/postgres?sslmode=require
-```
-
-> Prefira o **pooler** (6543), não a conexão direta (5432). O pooler aguenta melhor picos e não segura conexão ociosa — combina com o `max: 5` do pool no código.
+Zero-to-production em ~15 minutos. Segue **na ordem**.
 
 ---
 
-## 2. Rodar as migrations
+## PASSO 1 — Criar banco na Supabase (5 min, grátis)
 
-Localmente, com o repo clonado:
+1. Vai em https://supabase.com/dashboard/projects → **New project**.
+2. Preenche:
+   - **Name:** `deepsearch-soc-prod`
+   - **Database password:** clica em **Generate a password** e **COPIA E SALVA** (aparece uma vez só)
+   - **Region:** a mais perto de você (ex: `South America (São Paulo)`)
+   - **Plan:** Free
+3. Aguarda ~2 min o projeto provisionar.
+4. Menu esquerdo → **Project Settings** (engrenagem) → **Database**.
+5. Rola até **Connection string** → aba **Transaction pooler** (porta **6543**).
+6. Copia a string. Vai estar tipo:
+   ```
+   postgresql://postgres.abcdefghijklmno:[YOUR-PASSWORD]@aws-0-sa-east-1.pooler.supabase.com:6543/postgres
+   ```
+7. **Substitui `[YOUR-PASSWORD]`** pela senha do passo 2 e **adiciona `?sslmode=require` no final**:
+   ```
+   postgresql://postgres.abcdefghijklmno:MinhaSenh4Aqui@aws-0-sa-east-1.pooler.supabase.com:6543/postgres?sslmode=require
+   ```
+8. **Guarda essa URL** — vai colar no Render no Passo 4. Chamamos ela de `DATABASE_URL`.
+
+> ⚠️ Usa o **Transaction pooler (6543)**, NÃO o Direct connection (5432). Render + pooler = sem estouro de conexão.
+
+---
+
+## PASSO 2 — Rodar as migrations (2 min)
+
+Precisa criar as tabelas no banco. Faz local **uma vez**:
 
 ```bash
+# clona o repo existente
+git clone https://github.com/osmarrcs/DeepSearch-Soc.git
+cd DeepSearch-Soc
+
+# instala
 corepack enable
 pnpm install
-export DATABASE_URL="postgres://...pooler.supabase.com:6543/postgres?sslmode=require"
+
+# roda migration apontando pro Supabase
+export DATABASE_URL="postgresql://postgres.abcdefghijklmno:MinhaSenh4Aqui@aws-0-sa-east-1.pooler.supabase.com:6543/postgres?sslmode=require"
 pnpm --filter @workspace/db push
 ```
 
-Isso cria as tabelas `scans` e `vulnerabilities` na sua Supabase.
+Confirma quando pedir. Depois vai na Supabase → **Table Editor** e confere se as tabelas `scans` e `vulnerabilities` apareceram.
 
 ---
 
-## 3. Deploy no Render
+## PASSO 3 — Subir código no GitHub (3 min)
 
-### Opção A — Blueprint (1 clique)
-1. Sobe esse repo no GitHub.
-2. No Render, **New → Blueprint** → aponta pro repo. O `render.yaml` cria os dois serviços.
-3. Preenche as envs quando pedido:
-   - **deepsearch-soc-api**
-     - `DATABASE_URL` = URL da Supabase (passo 1)
-     - `CORS_ORIGIN` = URL pública do dashboard (ex: `https://deepsearch-soc-web.onrender.com`)
-   - **deepsearch-soc-web**
-     - `VITE_API_URL` = URL pública da API (ex: `https://deepsearch-soc-api.onrender.com`)
+Repo já existe em: `https://github.com/osmarrcs/DeepSearch-Soc`
 
-### Opção B — Manual
+Se você está enviando o código pela primeira vez (ou sobrescrevendo):
+```bash
+# dentro da pasta DeepSearch-Soc
+git init
+git add .
+git commit -m "initial commit" || true
+git branch -M main
+git remote add origin https://github.com/osmarrcs/DeepSearch-Soc.git
+# se o repo remoto já tiver histórico e você quiser forçar o conteúdo novo:
+git push -u origin main --force-with-lease
+```
 
-**Web Service (API)**
-- Root Directory: `.`
-- Build: `corepack enable && pnpm install --frozen-lockfile && pnpm --filter @workspace/api-server... build`
-- Start: `pnpm --filter @workspace/api-server start`
-- Health Check Path: `/api/healthz`
-- Env: `DATABASE_URL`, `CORS_ORIGIN`, `NODE_ENV=production`
-- **NÃO** setar `PORT` — o Render injeta.
-
-**Static Site (Dashboard)**
-- Root Directory: `artifacts/cve-dashboard`
-- Build: `corepack enable && pnpm install --frozen-lockfile --dir ../.. && pnpm --filter @workspace/cve-dashboard build`
-- Publish Directory: `dist`
-- Rewrite: `/*` → `/index.html` (200)
-- Env (build-time): `VITE_API_URL`
+> ⚠️ Use `--force-with-lease` só se o repo estiver vazio ou você quiser substituir o conteúdo atual. Se quiser preservar histórico, faça merge/pull antes.
 
 ---
 
-## 4. Dev local
+## PASSO 4 — Deploy no Render (5 min)
+
+### 4.1 Cria os serviços via Blueprint
+
+1. https://dashboard.render.com/select-repo?type=blueprint
+2. Conecta o repo `DeepSearch-Soc`.
+3. Render lê o `render.yaml` e mostra 2 serviços:
+   - `deepsearch-soc-prod-api` (Web Service)
+   - `deepsearch-soc-prod-web` (Static Site)
+4. Clica **Apply**.
+
+### 4.2 Preenche as env vars
+
+Ele vai pedir 3 valores:
+
+| Serviço | Variável | Valor |
+|---|---|---|
+| `deepsearch-soc-prod-api` | `DATABASE_URL` | a URL do Passo 1 (com senha e `?sslmode=require`) |
+| `deepsearch-soc-prod-api` | `CORS_ORIGIN` | **deixa em branco por enquanto** — volta depois |
+| `deepsearch-soc-prod-web` | `VITE_API_URL` | **deixa em branco por enquanto** — volta depois |
+
+Clica **Apply** de novo. Render começa o build (leva ~5 min).
+
+### 4.3 Descobre as URLs finais
+
+Quando os dois serviços ficarem **Live**, o Render mostra as URLs:
+- API: `https://deepsearch-soc-prod-api.onrender.com` (ou `-abcd` no fim se tiver conflito)
+- Web: `https://deepsearch-soc-prod-web.onrender.com`
+
+### 4.4 Preenche as URLs cruzadas
+
+Agora que você tem as URLs, volta e completa:
+
+**deepsearch-soc-prod-api** → Environment → edita:
+- `CORS_ORIGIN` = `https://deepsearch-soc-prod-web.onrender.com` (URL do web, **sem barra no final**)
+
+**deepsearch-soc-prod-web** → Environment → edita:
+- `VITE_API_URL` = `https://deepsearch-soc-prod-api.onrender.com` (URL da api, **sem barra no final**)
+
+Cada edição dispara um redeploy. Espera ficar **Live**.
+
+---
+
+## PASSO 5 — Testar
+
+1. Abre `https://deepsearch-soc-prod-api.onrender.com/api/healthz` → deve retornar `{"ok":true}`.
+2. Abre `https://deepsearch-soc-prod-web.onrender.com` → dashboard carrega.
+3. Vai em **Scanner** → seleciona uma tech → **Iniciar Varredura** → aparece toast verde e vira status "em_andamento".
+
+Se qualquer um falhar, vai pro **Troubleshooting** embaixo.
+
+---
+
+## Dev local
 
 ```bash
-# terminal 1 — API
-export DATABASE_URL="postgres://...supabase..."
+# .env na raiz OU exporta manualmente
+export DATABASE_URL="postgresql://...pooler.supabase.com:6543/postgres?sslmode=require"
+
+# terminal 1
 pnpm --filter @workspace/api-server dev
 
-# terminal 2 — Dashboard (proxya /api → localhost:3000 automaticamente)
+# terminal 2
 pnpm --filter @workspace/cve-dashboard dev
 ```
 
-Sem `VITE_API_URL` em dev, o dashboard usa caminhos relativos e o vite proxya `/api` pra `http://localhost:3000` (config em `vite.config.ts`).
+Sem `VITE_API_URL` em dev, o Vite proxya `/api` pra `localhost:3000`.
 
 ---
 
-## 5. Troubleshooting
+## Troubleshooting
 
 | Sintoma | Causa | Fix |
 |---|---|---|
-| `Expected 3 parts in JWT` | rodou com anon key da Supabase, não a connection string | usa a **Database URI** (Settings → Database), não a API key |
-| `self signed certificate` / `no pg_hba.conf entry` | SSL não ativado | garante `?sslmode=require` na URL e código atual do `lib/db/src/index.ts` |
-| Front chama API e dá CORS | `CORS_ORIGIN` não bate com a origem do site | copia exatamente `https://...onrender.com` (sem barra final) |
-| `drizzle-kit push` falha com `__dirname is not defined` | rodando versão antiga | já corrigido — `lib/db/drizzle.config.ts` usa `import.meta.url` |
-| Scan trava em `em_andamento` para sempre | processo caiu no meio | reinicia o serviço; débito técnico conhecido (documentado no REVIEW.md) |
+| Render build: `pnpm: not found` | `corepack` não ativou | já tá no `buildCommand`; se falhar, ativa Node 20+ no Render |
+| `password authentication failed` | senha errada ou `[YOUR-PASSWORD]` não substituído | volta no Passo 1.7 |
+| `self signed certificate` / `no pg_hba.conf entry` | faltou `?sslmode=require` na URL | adiciona no final da `DATABASE_URL` |
+| `too many connections` | usou porta 5432 (direct) | troca pra `6543` (pooler) no Passo 1.5 |
+| Dashboard chama API e dá CORS | `CORS_ORIGIN` errado ou com barra final | copia exato: `https://xxx.onrender.com` |
+| Dashboard mostra tela em branco | `VITE_API_URL` não setado no build | seta no `deepsearch-soc-prod-web` e força redeploy (build-time var) |
+| `drizzle-kit push` falha `__dirname is not defined` | versão antiga do arquivo | já corrigido nesse repo |
+| API dorme depois de 15min | Render free spin-down | normal; primeira request depois demora ~30s |
 
 ---
 
-## 6. O que mudou nessa revisão
+## Rotacionar senha do banco (se vazar)
 
-- **DB:** SSL + pool serverless-friendly (funciona com Supabase, Neon, Railway).
-- **API:** PORT com fallback, shutdown gracioso, CORS por env, error handler global JSON.
-- **Dashboard:** removidas dependências do Replit, `vite.config.ts` portátil, `VITE_API_URL` wire-up (`src/api-init.ts`), proxy `/api` em dev.
-- **Infra:** `render.yaml` pronto pra Blueprint, sem arquivos `.replit`.
-
-Detalhes técnicos no `REVIEW.md` do relatório original.
+1. Supabase → Settings → Database → **Reset database password**
+2. Copia nova URL com nova senha
+3. Render → `deepsearch-soc-prod-api` → Environment → atualiza `DATABASE_URL` → salva (redeploy automático)
