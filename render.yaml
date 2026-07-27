@@ -5,7 +5,7 @@ services:
     runtime: node
     plan: free
     rootDir: .
-    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm --filter @workspace/api-server build
+    buildCommand: pnpm install --frozen-lockfile && pnpm --filter @workspace/api-server build
     startCommand: pnpm --filter @workspace/api-server start
     healthCheckPath: /api/healthz
     envVars:
@@ -20,7 +20,7 @@ services:
     name: deepsearch-soc-prod-web
     runtime: static
     rootDir: .
-    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm --filter @workspace/cve-dashboard build
+    buildCommand: pnpm install --frozen-lockfile && pnpm --filter @workspace/cve-dashboard build
     staticPublishPath: ./artifacts/cve-dashboard/dist
     routes:
       - type: rewrite
