@@ -1,33 +1,31 @@
 # Render Blueprint — sobe API + Dashboard num único deploy.
-# Depois de criar: preencha DATABASE_URL (Supabase pooled URL) no serviço da API
-# e VITE_API_URL (URL pública do web service) no static site.
 services:
   - type: web
     name: deepsearch-soc-prod-api
     runtime: node
     plan: free
     rootDir: .
-    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm --filter @workspace/api-server... build
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm --filter @workspace/api-server build
     startCommand: pnpm --filter @workspace/api-server start
     healthCheckPath: /api/healthz
     envVars:
       - key: NODE_ENV
         value: production
       - key: DATABASE_URL
-        sync: false            # preencher no dashboard do Render
+        sync: false
       - key: CORS_ORIGIN
-        sync: false            # ex: https://deepsearch-soc-prod-web.onrender.com
+        sync: false
 
   - type: web
     name: deepsearch-soc-prod-web
     runtime: static
-    rootDir: artifacts/cve-dashboard
-    buildCommand: corepack enable && pnpm install --frozen-lockfile --dir ../.. && pnpm --filter @workspace/cve-dashboard build
-    staticPublishPath: ./dist
+    rootDir: .
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm --filter @workspace/cve-dashboard build
+    staticPublishPath: ./artifacts/cve-dashboard/dist
     routes:
       - type: rewrite
         source: /*
         destination: /index.html
     envVars:
       - key: VITE_API_URL
-        sync: false            # ex: https://deepsearch-soc-prod-api.onrender.com
+        sync: false
