@@ -11,7 +11,7 @@ packages:
 catalog:
   '@tailwindcss/vite': ^4.1.14
   '@tanstack/react-query': ^5.90.21
-  '@types/node': ^25.3.3
+  '@types/node': ^25.9.5
   '@types/react': ^19.2.0
   '@types/react-dom': ^19.2.0
   '@vitejs/plugin-react': ^5.0.4
@@ -41,3 +41,6 @@ overrides:
   # drizzle-kit usa esbuild antigo com vuln — força a versão segura.
   "@esbuild-kit/esm-loader": "npm:tsx@^4.21.0"
   esbuild: "0.27.3"
+
+allowBuilds:
+  esbuild: true

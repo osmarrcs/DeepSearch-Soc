@@ -57,7 +57,12 @@ export async function searchOsvDev(tech: string): Promise<CveResult[]> {
     const resp = await fetchWithTimeout(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ package: { name: tech.toLowerCase() } }),
+      body: JSON.stringify({
+        package: {
+          name: tech.toLowerCase(),
+          ecosystem: "npm",
+        },
+      }),
     });
     if (!resp.ok) return results;
     const data = await resp.json() as { vulns?: Record<string, string>[] };
@@ -78,20 +83,36 @@ export async function searchOsvDev(tech: string): Promise<CveResult[]> {
 }
 
 export async function searchCircl(tech: string): Promise<CveResult[]> {
-  const url = `https://cve.circl.lu/api/search/${encodeURIComponent(tech.toLowerCase())}`;
+  const url = `https://cve.circl.lu/api/vulnerability/fulltext?q=${encodeURIComponent(tech.toLowerCase())}`;
   const results: CveResult[] = [];
   try {
-    const resp = await fetchWithTimeout(url);
+    const resp = await fetchWithTimeout(url, {
+      headers: { Accept: "application/json" },
+    });
     if (!resp.ok) return results;
-    const data = await resp.json() as { data?: Record<string, unknown>[] };
+    const data = await resp.json() as {
+      data?: Array<{
+        cveMetadata?: { cveId?: string };
+        containers?: {
+          cna?: {
+            descriptions?: Array<{ lang?: string; value?: string }>;
+            affected?: Array<{ vendor?: string; product?: string }>;
+          };
+        };
+      }>;
+    };
     for (const vuln of (data.data ?? []).slice(0, 2)) {
+      const cveId = String(vuln.cveMetadata?.cveId ?? "");
+      const description = vuln.containers?.cna?.descriptions?.find((d) => d.lang === "en")?.value
+        ?? vuln.containers?.cna?.descriptions?.[0]?.value
+        ?? "Sem descrição disponível.";
       results.push({
-        id: String(vuln["id"] ?? ""),
+        id: cveId || `CIRCL-${Date.now()}`,
         tech,
-        desc: String(vuln["summary"] ?? "Sem descrição disponível."),
+        desc: String(description),
         solution: "Verificar boletins do fabricante.",
-        cvss: String(vuln["cvss"] ?? "N/D"),
-        source: "CIRCL CVE Search",
+        cvss: "N/D",
+        source: "CIRCL Vulnerability Fulltext",
       });
     }
   } catch (err) {

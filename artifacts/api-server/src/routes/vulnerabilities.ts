@@ -1,6 +1,5 @@
 import { Router, type IRouter } from "express";
-import { eq, and, desc } from "drizzle-orm";
-import { db, vulnerabilitiesTable } from "@workspace/db";
+import { and, desc, eq, db, vulnerabilitiesTable } from "@workspace/db";
 import {
   ListVulnerabilitiesQueryParams,
   GetVulnerabilityParams,

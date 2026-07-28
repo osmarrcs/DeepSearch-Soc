@@ -1,6 +1,5 @@
 import { Router, type IRouter } from "express";
-import { eq, desc } from "drizzle-orm";
-import { db, scansTable, vulnerabilitiesTable } from "@workspace/db";
+import { db, scansTable, vulnerabilitiesTable, desc, eq } from "@workspace/db";
 import {
   GetScanParams,
   CreateScanBody,
@@ -66,7 +65,7 @@ async function runScan(scanId: number, technologies: string[]): Promise<void> {
     const existing = await db
       .select({ cveId: vulnerabilitiesTable.cveId })
       .from(vulnerabilitiesTable);
-    const processedIds = new Set(existing.map((e) => e.cveId));
+    const processedIds = new Set(existing.map((e: { cveId: string }) => e.cveId));
 
     const seen = new Set<string>();
     let totalFound = 0;

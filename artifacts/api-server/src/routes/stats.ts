@@ -1,6 +1,5 @@
 import { Router, type IRouter } from "express";
-import { desc, sql } from "drizzle-orm";
-import { db, vulnerabilitiesTable, scansTable } from "@workspace/db";
+import { db, vulnerabilitiesTable, scansTable, desc, sql } from "@workspace/db";
 
 const router: IRouter = Router();
 
@@ -73,7 +72,7 @@ router.get("/stats/recent", async (_req, res): Promise<void> => {
     .limit(10);
 
   res.json(
-    rows.map((v) => ({
+    rows.map((v: typeof vulnerabilitiesTable.$inferSelect) => ({
       id: v.id,
       cveId: v.cveId,
       tech: v.tech,
