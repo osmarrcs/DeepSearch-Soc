@@ -3,7 +3,7 @@ CREATE TABLE "scans" (
 	"status" text DEFAULT 'em_andamento' NOT NULL,
 	"started_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"completed_at" timestamp with time zone,
-	"technologies" text[] DEFAULT '{}' NOT NULL,
+	"technologies" jsonb DEFAULT '[]'::jsonb NOT NULL,
 	"total_found" integer DEFAULT 0 NOT NULL
 );
 --> statement-breakpoint

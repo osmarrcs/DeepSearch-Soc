@@ -9,6 +9,7 @@
   "scripts": {
     "db:generate": "drizzle-kit generate --config=drizzle.config.ts",
     "db:migrate": "drizzle-kit migrate --config=drizzle.config.ts",
+    "db:bootstrap": "node ./scripts/bootstrap.mjs",
     "db:studio": "drizzle-kit studio --config=drizzle.config.ts",
     "db:seed": "drizzle-kit seed --config=drizzle.config.ts",
     "build": "tsc -p tsconfig.json",

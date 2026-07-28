@@ -122,6 +122,8 @@ Cada edição dispara um redeploy. Espera ficar **Live**.
 
 Se qualquer um falhar, vai pro **Troubleshooting** embaixo.
 
+> Importante: nesta versão, o `render.yaml` roda `pnpm --filter @workspace/db db:bootstrap` antes de iniciar a API. Isso corrige automaticamente o schema do banco em produção, inclusive o campo `scans.technologies` que causava 500 no `POST /api/scans`.
+
 ---
 
 ## Dev local
@@ -152,6 +154,7 @@ Sem `VITE_API_URL` em dev, o Vite proxya `/api` pra `localhost:3000`.
 | Dashboard chama API e dá CORS | `CORS_ORIGIN` errado ou com barra final | copia exato: `https://xxx.onrender.com` |
 | Dashboard mostra tela em branco | `VITE_API_URL` não setado no build | seta no `deepsearch-soc-prod-web` e força redeploy (build-time var) |
 | `drizzle-kit push` falha `__dirname is not defined` | versão antiga do arquivo | já corrigido nesse repo |
+| `POST /api/scans` retorna 500 com `insert into "scans"` e `technologies` | banco antigo com tipo incompatível no campo `scans.technologies` | faça deploy desta versão; a API roda `db:bootstrap` no start e converte o campo sem apagar dados |
 | API dorme depois de 15min | Render free spin-down | normal; primeira request depois demora ~30s |
 
 ---

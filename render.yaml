@@ -6,7 +6,7 @@ services:
     plan: free
     rootDir: .
     buildCommand: pnpm install --frozen-lockfile && pnpm --filter @workspace/api-server build
-    startCommand: pnpm --filter @workspace/api-server start
+    startCommand: pnpm --filter @workspace/db db:bootstrap && pnpm --filter @workspace/api-server start
     healthCheckPath: /api/healthz
     envVars:
       - key: NODE_ENV

@@ -46,7 +46,7 @@ git clone https://github.com/osmarrcs/DeepSearch-Soc.git
 cd DeepSearch-Soc
 cp .env.example .env         # preencha DATABASE_URL
 pnpm install
-pnpm --filter @workspace/db migrate    # cria as tabelas
+pnpm --filter @workspace/db db:bootstrap  # cria/atualiza as tabelas sem apagar dados
 pnpm --filter @workspace/api-server dev   # API  → http://localhost:3000
 pnpm --filter @workspace/cve-dashboard dev # Web → http://localhost:5173
 ```
@@ -63,7 +63,9 @@ Guia completo em [`DEPLOY.md`](./DEPLOY.md). Resumo:
    - `DATABASE_URL` (API) — URL do Supabase pooler.
    - `CORS_ORIGIN` (API) — URL do frontend.
    - `VITE_API_URL` (Web) — URL da API.
-4. Rode as migrations uma vez (`pnpm --filter @workspace/db migrate` local apontando pra prod, ou via Render Shell).
+4. O bootstrap do banco roda automaticamente no start da API no Render. Se quiser rodar manualmente: `pnpm --filter @workspace/db db:bootstrap`.
+
+> Correção incluída: o campo `scans.technologies` agora é `jsonb` e há um bootstrap idempotente para bancos já criados. Isso resolve o erro 500 no `POST /api/scans` causado por mismatch de schema/tipo no banco de produção.
 
 ## 🔐 Variáveis de ambiente
 
