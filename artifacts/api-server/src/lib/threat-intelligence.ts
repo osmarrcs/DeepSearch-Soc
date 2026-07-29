@@ -4,7 +4,7 @@ import { logger } from "./logger";
 const NVD_API_KEY = process.env["NVD_API_KEY"]?.trim() ?? "";
 const GEMINI_API_KEY = process.env["GEMINI_API_KEY"]?.trim() ?? "";
 const GEMINI_MODEL = process.env["GEMINI_MODEL"]?.trim() || "gemini-3.6-flash";
-const GEMINI_FALLBACK_MODEL = process.env["GEMINI_FALLBACK_MODEL"]?.trim() || "gemini-3.5-flash-lite";
+const GEMINI_FALLBACK_MODEL = process.env["GEMINI_FALLBACK_MODEL"]?.trim() || "gemini-3.5-flash";
 
 const REPORT_CACHE_TTL_MS = 30 * 60 * 1000;
 const MAX_REFERENCE_DOCUMENTS = 4;
@@ -29,6 +29,7 @@ export interface ThreatAnalysis {
   vetor_ataque: string;
   mecanica_exploracao: string;
   exploracao_ativa: string;
+  evidencias_exploracao: string;
   patch_disponivel: string;
   mitigacoes_temporarias: string;
   deteccao_soc: string;
@@ -45,11 +46,27 @@ export interface ThreatAnalysis {
   justificativa_confianca: string;
 }
 
+export interface SourceDiagnostic {
+  status: "ok" | "unavailable" | "error";
+  detail: string;
+}
+
+export interface ReportSourceDiagnostics {
+  nvd: SourceDiagnostic;
+  cveProgram: SourceDiagnostic;
+  cisaKev: SourceDiagnostic;
+  epss: SourceDiagnostic;
+  references: SourceDiagnostic;
+  gemini: SourceDiagnostic;
+}
+
 export interface ProfessionalReport {
   html: string;
   analysis: ThreatAnalysis;
   modelUsed: string | null;
   cacheHit: boolean;
+  resolvedTechnology: string;
+  sources: ReportSourceDiagnostics;
 }
 
 interface NvdReference {
@@ -117,6 +134,7 @@ interface ReferenceDocument {
 interface IntelligencePackage {
   cveId: string;
   technology: string;
+  resolvedTechnology: string;
   collectedAt: string;
   seed: VulnerabilitySeed;
   nvd: NvdRecord | null;
@@ -134,11 +152,13 @@ export function getIntelligenceConfig() {
     geminiModel: GEMINI_MODEL,
     geminiFallbackModel: GEMINI_FALLBACK_MODEL,
     reportCacheMinutes: REPORT_CACHE_TTL_MS / 60000,
+    structuredOutput: true,
+    reportTemplate: "colab-standard-v13",
   };
 }
 
 export async function generateProfessionalReport(seed: VulnerabilitySeed): Promise<ProfessionalReport> {
-  const key = `${seed.cveId}:${seed.tech}`.toUpperCase();
+  const key = `V13:${seed.cveId}:${seed.tech}`.toUpperCase();
   const cached = reportCache.get(key);
   if (cached && cached.expiresAt > Date.now()) {
     return { ...cached.value, cacheHit: true };
@@ -147,7 +167,15 @@ export async function generateProfessionalReport(seed: VulnerabilitySeed): Promi
   const intelligence = await buildIntelligencePackage(seed);
   const { analysis, modelUsed } = await analyzeWithGemini(intelligence);
   const html = renderColabStyleReport(intelligence, analysis);
-  const value: ProfessionalReport = { html, analysis, modelUsed, cacheHit: false };
+  const sources = buildSourceDiagnostics(intelligence, modelUsed);
+  const value: ProfessionalReport = {
+    html,
+    analysis,
+    modelUsed,
+    cacheHit: false,
+    resolvedTechnology: intelligence.resolvedTechnology,
+    sources,
+  };
   reportCache.set(key, { expiresAt: Date.now() + REPORT_CACHE_TTL_MS, value });
   return value;
 }
@@ -165,9 +193,12 @@ async function buildIntelligencePackage(seed: VulnerabilitySeed): Promise<Intell
     references.slice(0, MAX_REFERENCE_DOCUMENTS).map(fetchReferenceDocument),
   );
 
+  const resolvedTechnology = resolveAffectedTechnology(seed.tech, nvd, cveProgram);
+
   return {
     cveId: seed.cveId,
     technology: seed.tech,
+    resolvedTechnology,
     collectedAt: new Date().toISOString(),
     seed,
     nvd,
@@ -182,7 +213,7 @@ async function fetchNvdRecord(cveId: string): Promise<NvdRecord | null> {
   try {
     const headers: Record<string, string> = {
       Accept: "application/json",
-      "User-Agent": "DeepSearch-SOC/11.0",
+      "User-Agent": "DeepSearch-SOC/13.0",
     };
     if (NVD_API_KEY) headers.apiKey = NVD_API_KEY;
 
@@ -309,7 +340,7 @@ async function fetchReferenceDocument(reference: NvdReference): Promise<Referenc
       {
         headers: {
           Accept: "text/html,application/json,text/plain;q=0.9,*/*;q=0.5",
-          "User-Agent": "DeepSearch-SOC/11.0",
+          "User-Agent": "DeepSearch-SOC/13.0",
         },
         redirect: "follow",
       },
@@ -351,6 +382,53 @@ async function fetchReferenceDocument(reference: NvdReference): Promise<Referenc
   }
 }
 
+const THREAT_ANALYSIS_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    tipo_evento: { type: "string", description: "Classificação técnica formal e objetiva da vulnerabilidade." },
+    resumo_executivo: { type: "string", description: "Síntese executiva concisa, sem repetir literalmente a NVD." },
+    impacto_tecnico: { type: "string", description: "Impacto técnico confirmado nas fontes, distinguindo fato de inferência." },
+    produtos_afetados: { type: "string", description: "Fabricante, produto e componentes afetados confirmados. Não usar automaticamente a categoria da busca." },
+    versoes_afetadas: { type: "string", description: "Faixas de versões afetadas e corrigidas, somente quando confirmadas." },
+    vetor_ataque: { type: "string", description: "Origem do ataque, privilégios, interação e exposição exigidos." },
+    mecanica_exploracao: { type: "string", description: "Explicação defensiva do mecanismo, sem payload, credenciais, comandos ou passo a passo ofensivo." },
+    exploracao_ativa: { type: "string", description: "Situação de exploração conhecida, PoC público e CISA KEV, sem confundir conceitos." },
+    evidencias_exploracao: { type: "string", description: "Evidências confirmadas de exploração ou ausência delas; EPSS é probabilidade, não evidência de ataque." },
+    patch_disponivel: { type: "string", description: "Versões corrigidas, patches ou status EOL confirmados e origem da informação." },
+    mitigacoes_temporarias: { type: "string", description: "Controles compensatórios confirmados ou claramente marcados como inferência técnica." },
+    deteccao_soc: { type: "string", description: "Logs, telemetria e sinais defensivos úteis, sem classificar configurações normais como IOCs." },
+    indicadores_comprometimento: { type: "string", description: "Somente hashes, IPs, domínios, URLs ou artefatos maliciosos confirmados. Portas, usuários padrão e caminhos locais não são IOCs por si só." },
+    prioridade_recomendada: { type: "string", enum: ["Crítica", "Alta", "Média", "Baixa"] },
+    recomendacao: { type: "string", description: "Ação técnica priorizada e objetiva para a equipe responsável." },
+    fontes_utilizadas: {
+      type: "array",
+      maxItems: 8,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          nome: { type: "string" },
+          url: { type: "string" },
+          contribuicao: { type: "string" },
+        },
+        required: ["nome", "url", "contribuicao"],
+      },
+    },
+    lacunas_de_informacao: { type: "array", maxItems: 8, items: { type: "string" } },
+    nivel_confianca: { type: "string", enum: ["Alto", "Médio", "Baixo"] },
+    justificativa_confianca: { type: "string" },
+  },
+  required: [
+    "tipo_evento", "resumo_executivo", "impacto_tecnico", "produtos_afetados",
+    "versoes_afetadas", "vetor_ataque", "mecanica_exploracao", "exploracao_ativa",
+    "evidencias_exploracao", "patch_disponivel", "mitigacoes_temporarias",
+    "deteccao_soc", "indicadores_comprometimento", "prioridade_recomendada",
+    "recomendacao", "fontes_utilizadas", "lacunas_de_informacao",
+    "nivel_confianca", "justificativa_confianca"
+  ],
+} as const;
+
 async function analyzeWithGemini(
   intelligence: IntelligencePackage,
 ): Promise<{ analysis: ThreatAnalysis; modelUsed: string | null }> {
@@ -361,7 +439,8 @@ async function analyzeWithGemini(
   const context = JSON.stringify(
     {
       cve_id: intelligence.cveId,
-      tecnologia: intelligence.technology,
+      categoria_usada_na_busca: intelligence.technology,
+      produto_ou_tecnologia_identificada_nas_fontes: intelligence.resolvedTechnology,
       nvd: intelligence.nvd,
       cve_program_mitre: intelligence.cveProgram,
       cisa_kev: intelligence.cisaKev,
@@ -377,66 +456,65 @@ async function analyzeWithGemini(
 Você é um analista sênior de Threat Intelligence e Vulnerability Management.
 
 OBJETIVO
-Correlacione as evidências abaixo e produza uma análise executiva técnica,
-concisa, objetiva e totalmente em português do Brasil. Não faça somente uma
-tradução ou um resumo da descrição da NVD.
+Produza uma análise técnica executiva em português do Brasil usando sempre o
+mesmo padrão de campos definido pelo esquema JSON. Correlacione as fontes; não
+faça uma tradução ou um resumo mecânico da descrição da NVD.
+
+HIERARQUIA DE CONFIANÇA
+1. Aviso oficial do fabricante e CNA responsável pelo registro.
+2. CVE Program/MITRE e NVD.
+3. CISA KEV e FIRST EPSS.
+4. Fontes técnicas de terceiros, somente como complemento claramente indicado.
 
 REGRAS OBRIGATÓRIAS
-1. Cruze NVD, CVE Program/MITRE, CISA KEV, EPSS, CVSS, CWE, CPE, avisos do fabricante, patches e notas de versão.
-2. Priorize dados do fabricante ou da CNA quando estiverem disponíveis.
-3. CISA KEV confirma exploração conhecida somente quando houver um registro correspondente.
-4. EPSS é probabilidade estimada de exploração nos próximos 30 dias; não é confirmação de ataque e não substitui análise de risco.
-5. Não invente versões, patches, IOCs, técnicas ATT&CK, exploits ou datas.
-6. Identifique conclusões inferidas como "Inferência técnica".
-7. Quando não houver confirmação, use "Não confirmado nas fontes consultadas".
-8. Não gere payloads, código de exploit ou instruções ofensivas.
-9. Nos campos de texto, não use Markdown, asteriscos ou crases.
-10. Em fontes_utilizadas, use somente URLs presentes nos dados fornecidos.
+1. A categoria usada na busca é apenas um filtro. Não a trate como produto afetado.
+   Determine fabricante e produto por CNA, CPE, affected e advisories.
+2. CISA KEV confirma exploração conhecida somente quando houver correspondência.
+3. PoC público não significa exploração ativa em campanhas reais.
+4. EPSS é uma estimativa probabilística para os próximos 30 dias; não é evidência
+   de ataque e não substitui a avaliação de risco da organização.
+5. Não invente versões, patches, datas, IOCs, técnicas ATT&CK ou detalhes ausentes.
+6. Identifique conclusões não confirmadas com a expressão "Inferência técnica".
+7. Quando não houver confirmação, escreva "Não confirmado nas fontes consultadas".
+8. Não forneça payload, credenciais, comandos, caminhos sensíveis ou instruções
+   operacionais de exploração. Explique a mecânica apenas no nível defensivo.
+9. Porta exposta, usuário padrão, produto, caminho de arquivo e configuração não
+   são IOCs por si só. Coloque-os em detecção quando forem defensivamente úteis.
+10. Seja conciso: cada campo deve ter de uma a quatro frases, salvo versões e fontes.
+11. Não use Markdown, asteriscos, crases ou listas dentro dos campos textuais.
+12. Em fontes_utilizadas, use somente URLs existentes nos dados fornecidos.
+13. Se as fontes divergirem, informe a divergência e priorize fabricante/CNA.
 
 DADOS CONSOLIDADOS
 ${context}
 
-Retorne somente JSON válido com esta estrutura:
-{
-  "tipo_evento": "",
-  "resumo_executivo": "",
-  "impacto_tecnico": "",
-  "produtos_afetados": "",
-  "versoes_afetadas": "",
-  "vetor_ataque": "",
-  "mecanica_exploracao": "",
-  "exploracao_ativa": "",
-  "patch_disponivel": "",
-  "mitigacoes_temporarias": "",
-  "deteccao_soc": "",
-  "indicadores_comprometimento": "",
-  "prioridade_recomendada": "",
-  "recomendacao": "",
-  "fontes_utilizadas": [
-    {"nome": "", "url": "", "contribuicao": ""}
-  ],
-  "lacunas_de_informacao": [],
-  "nivel_confianca": "",
-  "justificativa_confianca": ""
-}`;
+Retorne somente o objeto JSON exigido pelo esquema configurado na API.`
 
   const models = Array.from(new Set([GEMINI_MODEL, GEMINI_FALLBACK_MODEL].filter(Boolean)));
   const errors: string[] = [];
 
   for (const model of models) {
     try {
-      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`;
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
       const response = await fetchWithTimeout(
         endpoint,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "x-goog-api-key": GEMINI_API_KEY,
+          },
           body: JSON.stringify({
             contents: [{ role: "user", parts: [{ text: prompt }] }],
             generationConfig: {
               temperature: 0.1,
               maxOutputTokens: 5000,
-              responseMimeType: "application/json",
+              responseFormat: {
+                text: {
+                  mimeType: "application/json",
+                  schema: THREAT_ANALYSIS_SCHEMA,
+                },
+              },
             },
           }),
         },
@@ -485,6 +563,7 @@ function normalizeAnalysis(
     vetor_ataque: cleanText(value.vetor_ataque) || fallback.vetor_ataque,
     mecanica_exploracao: cleanText(value.mecanica_exploracao) || fallback.mecanica_exploracao,
     exploracao_ativa: cleanText(value.exploracao_ativa) || fallback.exploracao_ativa,
+    evidencias_exploracao: cleanText(value.evidencias_exploracao) || fallback.evidencias_exploracao,
     patch_disponivel: cleanText(value.patch_disponivel) || fallback.patch_disponivel,
     mitigacoes_temporarias: cleanText(value.mitigacoes_temporarias) || fallback.mitigacoes_temporarias,
     deteccao_soc: cleanText(value.deteccao_soc) || fallback.deteccao_soc,
@@ -521,13 +600,18 @@ function deterministicFallback(intelligence: IntelligencePackage): ThreatAnalysi
     tipo_evento: `${cwes} em ${intelligence.technology}`,
     resumo_executivo: description,
     impacto_tecnico: description,
-    produtos_afetados: intelligence.technology,
+    produtos_afetados: intelligence.resolvedTechnology,
     versoes_afetadas: versions,
     vetor_ataque: nvd?.cvss.vector || "Não confirmado nas fontes consultadas",
     mecanica_exploracao: description,
     exploracao_ativa: cisa
       ? "Exploração conhecida confirmada por inclusão no catálogo CISA KEV."
       : "Não confirmado nas fontes consultadas.",
+    evidencias_exploracao: cisa
+      ? "A inclusão no catálogo CISA KEV confirma exploração conhecida."
+      : intelligence.epss.available && intelligence.epss.probability !== undefined
+        ? `Não há confirmação no CISA KEV. O EPSS estima ${(intelligence.epss.probability * 100).toFixed(2)}% de probabilidade de exploração nos próximos 30 dias, o que não constitui evidência de ataque.`
+        : "Não foram localizadas evidências confirmadas de exploração ativa nas fontes estruturadas consultadas.",
     patch_disponivel: refs.some((ref) => ref.tags.some((tag) => /patch|release notes/i.test(tag)))
       ? "Há referência de patch ou nota de versão nas fontes oficiais consultadas."
       : "Não confirmado nas fontes consultadas.",
@@ -551,12 +635,110 @@ function deterministicFallback(intelligence: IntelligencePackage): ThreatAnalysi
   };
 }
 
+function resolveAffectedTechnology(
+  seedTechnology: string,
+  nvd: NvdRecord | null,
+  cve: CveRecord,
+): string {
+  const products: string[] = [];
+
+  if (cve.available && Array.isArray(cve.affected)) {
+    for (const item of cve.affected) {
+      if (!item || typeof item !== "object") continue;
+      const record = item as Record<string, unknown>;
+      const vendor = cleanProductName(record["vendor"]);
+      const product = cleanProductName(record["product"]);
+      const label = [vendor, product]
+        .filter(Boolean)
+        .filter((value, index, array) => index === 0 || value.toLowerCase() !== array[0]?.toLowerCase())
+        .join(" — ");
+      if (label && !products.includes(label)) products.push(label);
+    }
+  }
+
+  if (!products.length && nvd?.affectedConfigurations.length) {
+    for (const item of nvd.affectedConfigurations) {
+      const parsed = parseCpeProduct(item.criteria);
+      if (parsed && !products.includes(parsed)) products.push(parsed);
+    }
+  }
+
+  return products.slice(0, 3).join("; ") || seedTechnology;
+}
+
+function cleanProductName(value: unknown): string {
+  if (typeof value !== "string") return "";
+  const text = value.trim();
+  if (!text || /^(n\/a|na|unknown|unspecified|não informado)$/i.test(text)) return "";
+  return text;
+}
+
+function parseCpeProduct(criteria?: string): string {
+  if (!criteria?.startsWith("cpe:2.3:")) return "";
+  const parts = criteria.split(":");
+  const vendor = decodeCpePart(parts[3] ?? "");
+  const product = decodeCpePart(parts[4] ?? "");
+  if (!vendor && !product) return "";
+  return [vendor, product]
+    .filter(Boolean)
+    .filter((value, index, array) => index === 0 || value.toLowerCase() !== array[0]?.toLowerCase())
+    .join(" — ");
+}
+
+function decodeCpePart(value: string): string {
+  if (!value || value === "*" || value === "-") return "";
+  return value
+    .replace(/\\([\\!"#$%&'()*+,./:;<=>?@[\]^`{|}~-])/g, "$1")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function buildSourceDiagnostics(
+  intelligence: IntelligencePackage,
+  modelUsed: string | null,
+): ReportSourceDiagnostics {
+  const collectedReferences = intelligence.referenceDocuments.filter((item) => item.collected).length;
+  const attemptedReferences = intelligence.referenceDocuments.length;
+
+  return {
+    nvd: intelligence.nvd
+      ? { status: "ok", detail: "Registro completo localizado no NVD." }
+      : { status: "unavailable", detail: "O NVD não retornou um registro utilizável para esta CVE." },
+    cveProgram: intelligence.cveProgram.available
+      ? { status: "ok", detail: "Registro da CNA localizado no CVE Program/MITRE." }
+      : { status: "unavailable", detail: intelligence.cveProgram.error || "Registro CNA indisponível." },
+    cisaKev: {
+      status: "ok",
+      detail: intelligence.cisaKev
+        ? "Correspondência encontrada no catálogo CISA KEV."
+        : "Catálogo consultado; a CVE não foi localizada no KEV.",
+    },
+    epss: intelligence.epss.available
+      ? { status: "ok", detail: "Pontuação EPSS localizada na FIRST." }
+      : { status: intelligence.epss.error ? "error" : "unavailable", detail: intelligence.epss.error || "EPSS sem registro para esta CVE." },
+    references: attemptedReferences
+      ? {
+          status: collectedReferences ? "ok" : "unavailable",
+          detail: `${collectedReferences} de ${attemptedReferences} referências prioritárias tiveram conteúdo coletado.`,
+        }
+      : { status: "unavailable", detail: "Nenhuma referência prioritária foi fornecida pelas fontes estruturadas." },
+    gemini: modelUsed
+      ? { status: "ok", detail: `Correlação concluída com ${modelUsed}.` }
+      : {
+          status: GEMINI_API_KEY ? "error" : "unavailable",
+          detail: GEMINI_API_KEY
+            ? "A chamada ao Gemini falhou; foi usada síntese determinística."
+            : "GEMINI_API_KEY não configurada; foi usada síntese determinística.",
+        },
+  };
+}
+
 function renderColabStyleReport(
   intelligence: IntelligencePackage,
   analysis: ThreatAnalysis,
 ): string {
   const cveId = escapeHtml(intelligence.cveId);
-  const tech = escapeHtml(intelligence.technology);
+  const tech = escapeHtml(intelligence.resolvedTechnology);
   const nvd = intelligence.nvd;
   const score = nvd?.cvss.score ?? parseNumeric(intelligence.seed.cvss);
   const { label, color } = classifySeverity(score, Boolean(intelligence.cisaKev));
@@ -592,65 +774,81 @@ function renderColabStyleReport(
       </div>`;
   }
 
-  const vendorReferences = mergeReferences(
-    intelligence.nvd?.references ?? [],
-    intelligence.cveProgram.references ?? [],
-  )
-    .slice(0, 10)
-    .map((reference) => {
-      const name = reference.source || safeHostname(reference.url);
-      const tags = reference.tags.length ? ` — ${reference.tags.join(", ")}` : "";
-      return `<li><strong>${escapeHtml(name)}:</strong> <a href="${escapeAttribute(reference.url)}" target="_blank" rel="noopener noreferrer" style="color:#0056b3;text-decoration:underline;">Abrir referência oficial</a>${escapeHtml(tags)}</li>`;
-    })
-    .join("");
+  const sourceMap = new Map<string, { nome: string; url: string; contribuicao: string }>();
+  for (const source of analysis.fontes_utilizadas) {
+    if (!isSafePublicUrl(source.url)) continue;
+    sourceMap.set(source.url, source);
+  }
+  if (sourceMap.size === 0) {
+    for (const reference of mergeReferences(
+      intelligence.nvd?.references ?? [],
+      intelligence.cveProgram.references ?? [],
+    ).slice(0, 8)) {
+      sourceMap.set(reference.url, {
+        nome: reference.source || safeHostname(reference.url),
+        url: reference.url,
+        contribuicao: reference.tags.join(", ") || "Referência técnica consultada",
+      });
+    }
+  }
 
-  const aiSources = analysis.fontes_utilizadas
-    .filter((source) => isSafePublicUrl(source.url))
+  const sourceItems = Array.from(sourceMap.values())
     .map((source) => `<li><strong>${escapeHtml(source.nome)}:</strong> ${escapeHtml(source.contribuicao)} — <a href="${escapeAttribute(source.url)}" target="_blank" rel="noopener noreferrer" style="color:#0056b3;text-decoration:underline;">abrir fonte</a></li>`)
-    .join("");
+    .join("") || "<li>Nenhuma fonte complementar pôde ser coletada automaticamente.</li>";
+
+  const gapItems = analysis.lacunas_de_informacao.length
+    ? analysis.lacunas_de_informacao.map((gap) => `<li>${escapeHtml(gap)}</li>`).join("")
+    : "<li>Nenhuma lacuna relevante foi indicada pela análise.</li>";
 
   return `
-<div style="font-family:Arial,sans-serif;color:#2b2b2b;line-height:1.6;font-size:14px;max-width:800px;margin:20px auto;padding:30px;border:1px solid #dcdcdc;background-color:#ffffff;box-shadow:0 4px 10px rgba(0,0,0,0.06);">
+<div style="font-family:Arial,sans-serif;color:#2b2b2b;line-height:1.6;font-size:14px;max-width:850px;margin:20px auto;padding:30px;border:1px solid #dcdcdc;background-color:#ffffff;box-shadow:0 4px 10px rgba(0,0,0,0.06);">
   <p>Prezados,</p>
-  <p>Durante as atividades de inteligência técnica, compilamos um boletim referente a uma vulnerabilidade identificada no <strong>${tech}</strong>.</p>
+  <p>Boletim consolidado da vulnerabilidade <strong>${cveId}</strong>, associada a <strong>${tech}</strong>.</p>
 
-  <h3 style="color:#1a252f;border-bottom:2px solid #1a252f;padding-bottom:5px;margin-top:25px;font-size:16px;">Resumo do Alerta:</h3>
+  <h3 style="color:#1a252f;border-bottom:2px solid #1a252f;padding-bottom:5px;margin-top:25px;font-size:16px;">Resumo executivo</h3>
   <ul style="padding-left:20px;margin-top:10px;">
-    <li style="margin-bottom:6px;"><strong>Data da compilação:</strong> ${escapeHtml(dateText)}</li>
-    <li style="margin-bottom:6px;"><strong>Tipo de evento:</strong> ${escapeHtml(analysis.tipo_evento)}.</li>
-    <li style="margin-bottom:6px;"><strong>Resumo executivo:</strong> ${escapeHtml(analysis.resumo_executivo)}</li>
-    <li style="margin-bottom:6px;"><strong>Impacto técnico:</strong> ${escapeHtml(analysis.impacto_tecnico)}</li>
-    <li style="margin-bottom:6px;"><strong>Prioridade recomendada:</strong> ${escapeHtml(analysis.prioridade_recomendada)}</li>
-    <li style="margin-bottom:6px;"><strong>Nível de confiança:</strong> ${escapeHtml(analysis.nivel_confianca)} — ${escapeHtml(analysis.justificativa_confianca)}</li>
+    <li style="margin-bottom:6px;"><strong>Data:</strong> ${escapeHtml(dateText)}</li>
+    <li style="margin-bottom:6px;"><strong>Evento:</strong> ${escapeHtml(analysis.tipo_evento)}</li>
+    <li style="margin-bottom:6px;"><strong>Resumo:</strong> ${escapeHtml(analysis.resumo_executivo)}</li>
+    <li style="margin-bottom:6px;"><strong>Impacto:</strong> ${escapeHtml(analysis.impacto_tecnico)}</li>
+    <li style="margin-bottom:6px;"><strong>Prioridade:</strong> ${escapeHtml(analysis.prioridade_recomendada)}</li>
+    <li style="margin-bottom:6px;"><strong>Confiança:</strong> ${escapeHtml(analysis.nivel_confianca)} — ${escapeHtml(analysis.justificativa_confianca)}</li>
   </ul>
 
   ${metricBlocks}
 
-  <h3 style="color:#1a252f;border-bottom:2px solid #1a252f;padding-bottom:5px;margin-top:25px;font-size:16px;">Detalhes Técnicos da Ameaça (${cveId}):</h3>
+  <h3 style="color:#1a252f;border-bottom:2px solid #1a252f;padding-bottom:5px;margin-top:25px;font-size:16px;">Detalhes técnicos</h3>
   <ul style="padding-left:20px;margin-top:10px;">
-    <li style="margin-bottom:6px;"><strong>Classificação Base:</strong> <span style="color:${color};font-weight:bold;">${label}</span>. Índice CVSS de <strong>${score === null ? "N/D" : score}</strong>${nvd?.cvss.vector ? ` — vetor ${escapeHtml(nvd.cvss.vector)}` : ""}.</li>
-    <li style="margin-bottom:6px;"><strong>Produtos afetados:</strong> ${escapeHtml(analysis.produtos_afetados)}</li>
-    <li style="margin-bottom:6px;"><strong>Versões Afetadas:</strong> ${escapeHtml(analysis.versoes_afetadas)}</li>
-    <li style="margin-bottom:6px;"><strong>Vetor de ataque:</strong> ${escapeHtml(analysis.vetor_ataque)}</li>
-    <li style="margin-bottom:6px;"><strong>Mecânica da Exploração:</strong> ${escapeHtml(analysis.mecanica_exploracao)}</li>
-    <li style="margin-bottom:6px;"><strong>Situação de exploração:</strong> ${escapeHtml(analysis.exploracao_ativa)}</li>
+    <li style="margin-bottom:6px;"><strong>CVSS:</strong> <span style="color:${color};font-weight:bold;">${label}</span> — ${score === null ? "N/D" : score}${nvd?.cvss.vector ? ` — ${escapeHtml(nvd.cvss.vector)}` : ""}</li>
+    <li style="margin-bottom:6px;"><strong>Produtos:</strong> ${escapeHtml(analysis.produtos_afetados)}</li>
+    <li style="margin-bottom:6px;"><strong>Versões:</strong> ${escapeHtml(analysis.versoes_afetadas)}</li>
+    <li style="margin-bottom:6px;"><strong>Vetor:</strong> ${escapeHtml(analysis.vetor_ataque)}</li>
+    <li style="margin-bottom:6px;"><strong>Mecânica:</strong> ${escapeHtml(analysis.mecanica_exploracao)}</li>
+    <li style="margin-bottom:6px;"><strong>Exploração:</strong> ${escapeHtml(analysis.exploracao_ativa)}</li>
+    <li style="margin-bottom:6px;"><strong>Evidências:</strong> ${escapeHtml(analysis.evidencias_exploracao)}</li>
   </ul>
 
-  <h3 style="color:#1a252f;border-bottom:2px solid #1a252f;padding-bottom:5px;margin-top:25px;font-size:16px;">Recomendações e Ações de Mitigação:</h3>
-  <p><strong>Patch disponível:</strong> ${escapeHtml(analysis.patch_disponivel)}</p>
-  <p><strong>Mitigações temporárias:</strong> ${escapeHtml(analysis.mitigacoes_temporarias)}</p>
-  <p><strong>Detecção pelo SOC:</strong> ${escapeHtml(analysis.deteccao_soc)}</p>
-  <p><strong>Indicadores de comprometimento:</strong> ${escapeHtml(analysis.indicadores_comprometimento)}</p>
-  <p><strong>Ação Técnica:</strong> ${escapeHtml(analysis.recomendacao)}</p>
+  <h3 style="color:#1a252f;border-bottom:2px solid #1a252f;padding-bottom:5px;margin-top:25px;font-size:16px;">Correção e monitoramento</h3>
+  <ul style="padding-left:20px;margin-top:10px;">
+    <li style="margin-bottom:6px;"><strong>Patch:</strong> ${escapeHtml(analysis.patch_disponivel)}</li>
+    <li style="margin-bottom:6px;"><strong>Mitigações:</strong> ${escapeHtml(analysis.mitigacoes_temporarias)}</li>
+    <li style="margin-bottom:6px;"><strong>Detecção SOC:</strong> ${escapeHtml(analysis.deteccao_soc)}</li>
+    <li style="margin-bottom:6px;"><strong>IOCs:</strong> ${escapeHtml(analysis.indicadores_comprometimento)}</li>
+    <li style="margin-bottom:6px;"><strong>Recomendação:</strong> ${escapeHtml(analysis.recomendacao)}</li>
+  </ul>
 
-  <h3 style="color:#1a252f;border-bottom:2px solid #1a252f;padding-bottom:5px;margin-top:25px;font-size:16px;">Fontes de Consulta e Referência Técnica:</h3>
+  <h3 style="color:#1a252f;border-bottom:2px solid #1a252f;padding-bottom:5px;margin-top:25px;font-size:16px;">Lacunas</h3>
+  <ul style="padding-left:20px;margin-top:10px;">${gapItems}</ul>
+
+  <h3 style="color:#1a252f;border-bottom:2px solid #1a252f;padding-bottom:5px;margin-top:25px;font-size:16px;">Fontes usadas pela análise</h3>
+  <ul style="margin:8px 0 0 0;padding-left:20px;line-height:1.8;word-break:break-word;">${sourceItems}</ul>
+
+  <h3 style="color:#1a252f;border-bottom:2px solid #1a252f;padding-bottom:5px;margin-top:25px;font-size:16px;">Bases oficiais</h3>
   <ul style="margin:8px 0 0 0;padding-left:20px;line-height:1.8;word-break:break-word;">
-    <li><strong>Base Nacional de Vulnerabilidades (NVD/NIST):</strong> <a href="${nvdUrl}" target="_blank" rel="noopener noreferrer" style="color:#0056b3;text-decoration:underline;">Acessar registro no NVD</a></li>
-    <li><strong>Programa CVE/MITRE:</strong> <a href="${cveUrl}" target="_blank" rel="noopener noreferrer" style="color:#0056b3;text-decoration:underline;">Acessar registro CVE</a></li>
-    <li><strong>Catálogo CISA KEV:</strong> <a href="${cisaUrl}" target="_blank" rel="noopener noreferrer" style="color:#0056b3;text-decoration:underline;">Acessar catálogo</a></li>
-    <li><strong>Métrica EPSS/FIRST:</strong> <a href="${epssUrl}" target="_blank" rel="noopener noreferrer" style="color:#0056b3;text-decoration:underline;">Consultar EPSS</a></li>
-    ${vendorReferences}
-    ${aiSources}
+    <li><a href="${nvdUrl}" target="_blank" rel="noopener noreferrer" style="color:#0056b3;text-decoration:underline;">NVD/NIST</a></li>
+    <li><a href="${cveUrl}" target="_blank" rel="noopener noreferrer" style="color:#0056b3;text-decoration:underline;">CVE/MITRE</a></li>
+    <li><a href="${cisaUrl}" target="_blank" rel="noopener noreferrer" style="color:#0056b3;text-decoration:underline;">CISA KEV</a></li>
+    <li><a href="${epssUrl}" target="_blank" rel="noopener noreferrer" style="color:#0056b3;text-decoration:underline;">FIRST EPSS</a></li>
   </ul>
 </div>`.trim();
 }
@@ -805,21 +1003,58 @@ function chooseDescription(value: unknown): string {
 
 function summarizeAffectedVersions(nvd: NvdRecord | null, cve: CveRecord): string {
   if (cve.available && Array.isArray(cve.affected) && cve.affected.length) {
-    const text = JSON.stringify(cve.affected).slice(0, 3000);
-    return text || "Não confirmado nas fontes consultadas";
+    const summaries: string[] = [];
+
+    for (const item of cve.affected) {
+      if (!item || typeof item !== "object") continue;
+      const record = item as Record<string, unknown>;
+      const vendor = cleanProductName(record["vendor"]);
+      const product = cleanProductName(record["product"]);
+      const versions = Array.isArray(record["versions"])
+        ? record["versions"] as Array<Record<string, unknown>>
+        : [];
+
+      const versionTexts = versions.flatMap((version) => {
+        const status = stringOrUndefined(version["status"]);
+        if (status && !/affected|unknown/i.test(status)) return [];
+        const exact = stringOrUndefined(version["version"]);
+        const lessThan = stringOrUndefined(version["lessThan"]);
+        const lessThanOrEqual = stringOrUndefined(version["lessThanOrEqual"]);
+        const startIncluding = stringOrUndefined(version["versionStartIncluding"]);
+        const startExcluding = stringOrUndefined(version["versionStartExcluding"]);
+        const parts = [
+          exact && exact !== "*" ? exact : "",
+          lessThan ? `anteriores a ${lessThan}` : "",
+          lessThanOrEqual ? `até ${lessThanOrEqual}` : "",
+          startIncluding ? `a partir de ${startIncluding}` : "",
+          startExcluding ? `posteriores a ${startExcluding}` : "",
+        ].filter(Boolean);
+        return parts.length ? [parts.join(" ")] : [];
+      });
+
+      const label = [vendor, product]
+        .filter(Boolean)
+        .filter((value, index, array) => index === 0 || value.toLowerCase() !== array[0]?.toLowerCase())
+        .join(" — ");
+      const summary = `${label || "Produto não informado"}${versionTexts.length ? `: ${Array.from(new Set(versionTexts)).join(", ")}` : ""}`;
+      if (!summaries.includes(summary)) summaries.push(summary);
+    }
+
+    if (summaries.length) return summaries.slice(0, 8).join("; ");
   }
 
   if (nvd?.affectedConfigurations.length) {
     return nvd.affectedConfigurations
       .slice(0, 8)
       .map((item) => {
+        const product = parseCpeProduct(item.criteria) || item.criteria || "CPE não informado";
         const range = [
           item.versionStartIncluding ? `a partir de ${item.versionStartIncluding}` : "",
           item.versionStartExcluding ? `após ${item.versionStartExcluding}` : "",
           item.versionEndIncluding ? `até ${item.versionEndIncluding}` : "",
           item.versionEndExcluding ? `antes de ${item.versionEndExcluding}` : "",
         ].filter(Boolean).join(" ");
-        return `${item.criteria ?? "CPE não informado"}${range ? ` (${range})` : ""}`;
+        return `${product}${range ? ` (${range})` : ""}`;
       })
       .join("; ");
   }

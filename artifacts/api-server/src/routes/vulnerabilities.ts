@@ -108,6 +108,8 @@ router.get("/vulnerabilities/:id/report", async (req, res): Promise<void> => {
     analysis: report.analysis,
     modelUsed: report.modelUsed,
     cacheHit: report.cacheHit,
+    resolvedTechnology: report.resolvedTechnology,
+    sources: report.sources,
   });
 });
 
