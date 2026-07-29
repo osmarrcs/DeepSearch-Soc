@@ -52,22 +52,6 @@ DeepSearch-Soc/
 /relatorios/patch-tuesday
 ```
 
-## Variáveis principais
-
-| Variável | Finalidade |
-|---|---|
-| `DATABASE_URL` | Conexão Supabase/PostgreSQL |
-| `CORS_ORIGIN` | URL pública do dashboard |
-| `VITE_API_URL` | URL pública da API |
-| `NVD_API_KEY` | Aumenta a capacidade de consulta da NVD |
-| `GEMINI_API_KEY` | Correlação por IA somente no boletim por CVE |
-| `GEMINI_MODEL` | Modelo principal do Gemini |
-| `SCAN_TECH_CONCURRENCY` | Quantidade de tecnologias processadas em paralelo |
-| `REDHAT_JFPE_TO` | Destinatários da opção JFPE |
-| `REDHAT_TRF5_TO` | Destinatários da opção TRF5 |
-| `REDHAT_REPORT_CC` | Cópia dos relatórios Red Hat |
-| `MICROSOFT_REPORT_TO` | Destinatários do Patch Tuesday |
-| `MICROSOFT_REPORT_CC` | Cópia do Patch Tuesday |
 
 Os valores reais devem ficar no Render ou no `.env` local. Não coloque senhas, chaves ou endereços internos diretamente no código.
 
