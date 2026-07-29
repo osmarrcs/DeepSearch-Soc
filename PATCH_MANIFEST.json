@@ -1,0 +1,50 @@
+{
+  "version": "v12.0.0-patch",
+  "total_files": 35,
+  "new_files": [
+    "V12_IMPLEMENTATION.md",
+    "artifacts/api-server/src/lib/microsoft-report.ts",
+    "artifacts/api-server/src/lib/redhat-report.ts",
+    "artifacts/api-server/src/lib/report-utils.ts",
+    "artifacts/api-server/src/lib/threat-intelligence.ts",
+    "artifacts/api-server/src/routes/reports.ts",
+    "artifacts/cve-dashboard/src/components/ReportWorkspace.tsx",
+    "artifacts/cve-dashboard/src/lib/api.ts",
+    "artifacts/cve-dashboard/src/lib/report-actions.ts",
+    "artifacts/cve-dashboard/src/pages/MicrosoftPatchTuesday.tsx",
+    "artifacts/cve-dashboard/src/pages/RedHatReport.tsx"
+  ],
+  "changed_files": [
+    ".env.example",
+    "DEPLOY.md",
+    "README.md",
+    "artifacts/api-server/src/lib/scanner.ts",
+    "artifacts/api-server/src/lib/technologies.ts",
+    "artifacts/api-server/src/routes/health.ts",
+    "artifacts/api-server/src/routes/index.ts",
+    "artifacts/api-server/src/routes/scans.ts",
+    "artifacts/api-server/src/routes/vulnerabilities.ts",
+    "artifacts/cve-dashboard/src/App.tsx",
+    "artifacts/cve-dashboard/src/components/layout/AppLayout.tsx",
+    "artifacts/cve-dashboard/src/pages/Boletim.tsx",
+    "artifacts/cve-dashboard/src/pages/Scanner.tsx",
+    "artifacts/cve-dashboard/src/pages/Scans.tsx",
+    "artifacts/cve-dashboard/src/pages/VulnerabilityDetail.tsx",
+    "lib/api-client-react/src/generated/api.schemas.ts",
+    "lib/api-client-react/src/generated/api.ts",
+    "lib/api-spec/openapi.yaml",
+    "lib/api-zod/src/generated/api.ts",
+    "lib/api-zod/src/generated/types/scan.ts",
+    "lib/api-zod/src/generated/types/scanInput.ts",
+    "lib/db/scripts/bootstrap.mjs",
+    "lib/db/src/schema/scans.ts",
+    "render.yaml"
+  ],
+  "removed_files": [],
+  "notes": [
+    "Copie o conteúdo desta pasta para a raiz do repositório DeepSearch-Soc.",
+    "Não envie o ZIP como um único arquivo.",
+    "Este patch contém apenas arquivos novos ou alterados em relação à versão estável anterior.",
+    "Nenhuma credencial está incluída."
+  ]
+}

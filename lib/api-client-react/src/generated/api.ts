@@ -457,7 +457,7 @@ export const getGetVulnerabilityReportUrl = (id: number,) => {
 }
 
 /**
- * @summary Generate HTML report for a vulnerability (Tenable-style)
+ * @summary Generate a correlated Threat Intelligence report for a vulnerability
  */
 export const getVulnerabilityReport = async (id: number, options?: RequestInit): Promise<VulnerabilityReport> => {
 
@@ -504,7 +504,7 @@ export type GetVulnerabilityReportQueryError = ErrorType<void>
 
 
 /**
- * @summary Generate HTML report for a vulnerability (Tenable-style)
+ * @summary Generate a correlated Threat Intelligence report for a vulnerability
  */
 
 export function useGetVulnerabilityReport<TData = Awaited<ReturnType<typeof getVulnerabilityReport>>, TError = ErrorType<void>>(

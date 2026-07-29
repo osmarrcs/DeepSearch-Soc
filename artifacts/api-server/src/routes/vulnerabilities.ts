@@ -7,7 +7,7 @@ import {
   TriageVulnerabilityBody,
   GetVulnerabilityReportParams,
 } from "@workspace/api-zod";
-import { generateTenableReport } from "../lib/scanner";
+import { generateProfessionalReport } from "../lib/threat-intelligence";
 
 const router: IRouter = Router();
 
@@ -93,7 +93,7 @@ router.get("/vulnerabilities/:id/report", async (req, res): Promise<void> => {
     res.status(404).json({ error: "Vulnerabilidade não encontrada" });
     return;
   }
-  const html = generateTenableReport({
+  const report = await generateProfessionalReport({
     cveId: vuln.cveId,
     tech: vuln.tech,
     source: vuln.source,
@@ -101,7 +101,14 @@ router.get("/vulnerabilities/:id/report", async (req, res): Promise<void> => {
     solution: vuln.solution,
     cvss: vuln.cvss,
   });
-  res.json({ html, vulnerability: serializeVuln(vuln) });
+
+  res.json({
+    html: report.html,
+    vulnerability: serializeVuln(vuln),
+    analysis: report.analysis,
+    modelUsed: report.modelUsed,
+    cacheHit: report.cacheHit,
+  });
 });
 
 function serializeVuln(v: typeof vulnerabilitiesTable.$inferSelect) {

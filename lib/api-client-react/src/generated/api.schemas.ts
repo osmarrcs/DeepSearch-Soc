@@ -76,12 +76,21 @@ export interface Scan {
   /** @nullable */
   completedAt?: string | null;
   technologies: string[];
+  sources?: Array<'nvd' | 'cisa' | 'circl' | 'osv'>;
+  /** @nullable */
+  periodStart?: string | null;
+  /** @nullable */
+  periodEnd?: string | null;
   totalFound: number;
 }
 
 export interface ScanInput {
   /** @minItems 1 */
   technologies: string[];
+  startDate?: string;
+  endDate?: string;
+  /** @minItems 1 */
+  sources?: Array<'nvd' | 'cisa' | 'circl' | 'osv'>;
 }
 
 export interface Stats {

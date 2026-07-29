@@ -9,7 +9,71 @@ export interface CveResult {
   source: string;
 }
 
-async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 12000): Promise<Response> {
+export type ScanSource = "nvd" | "cisa" | "circl" | "osv";
+
+export interface ScanQueryOptions {
+  startDate: string;
+  endDate: string;
+  sources: ScanSource[];
+}
+
+const NVD_API_KEY = process.env["NVD_API_KEY"]?.trim() ?? "";
+const NVD_RESULTS_PER_TECH = readPositiveInt("NVD_RESULTS_PER_TECH", 20, 1, 100);
+const DEFAULT_SCAN_DAYS = readPositiveInt("SCAN_DAYS", 3, 1, 120);
+
+const CISA_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json";
+const CISA_CACHE_TTL_MS = 15 * 60 * 1000;
+
+export interface CisaKevItem {
+  cveID?: string;
+  vendorProject?: string;
+  product?: string;
+  vulnerabilityName?: string;
+  dateAdded?: string;
+  shortDescription?: string;
+  requiredAction?: string;
+}
+
+let cisaCache: { expiresAt: number; items: CisaKevItem[] } | null = null;
+let cisaPromise: Promise<CisaKevItem[]> | null = null;
+
+// A fila global respeita a janela da NVD. Com chave: aproximadamente 50
+// chamadas/30 s. Sem chave: aproximadamente 5 chamadas/30 s.
+let nvdQueue: Promise<void> = Promise.resolve();
+let nvdNextRequestAt = 0;
+
+function readPositiveInt(name: string, fallback: number, min: number, max: number): number {
+  const parsed = Number(process.env[name]);
+  if (!Number.isInteger(parsed) || parsed < min || parsed > max) return fallback;
+  return parsed;
+}
+
+export function getScannerConfig() {
+  return {
+    nvdApiKeyConfigured: Boolean(NVD_API_KEY),
+    nvdResultsPerTech: NVD_RESULTS_PER_TECH,
+    defaultScanDays: DEFAULT_SCAN_DAYS,
+    defaultSources: ["nvd", "cisa"],
+    optionalSources: ["circl", "osv"],
+  };
+}
+
+export function defaultScanWindow(): ScanQueryOptions {
+  const end = new Date();
+  const start = new Date(end);
+  start.setUTCDate(start.getUTCDate() - DEFAULT_SCAN_DAYS);
+  return {
+    startDate: start.toISOString().slice(0, 10),
+    endDate: end.toISOString().slice(0, 10),
+    sources: ["nvd", "cisa"],
+  };
+}
+
+export async function fetchWithTimeout(
+  url: string,
+  options: RequestInit = {},
+  timeoutMs = 12000,
+): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -19,61 +83,109 @@ async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutM
   }
 }
 
-export async function searchCisaKev(tech: string): Promise<CveResult[]> {
-  const url = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json";
-  const results: CveResult[] = [];
-  try {
-    const resp = await fetchWithTimeout(url);
-    if (!resp.ok) return results;
-    const data = await resp.json() as { vulnerabilities?: Record<string, string>[] };
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+export async function waitForNvdSlot(): Promise<void> {
+  const intervalMs = NVD_API_KEY ? 650 : 6200;
+  const previous = nvdQueue;
+  let release!: () => void;
+  nvdQueue = new Promise<void>((resolve) => {
+    release = resolve;
+  });
 
-    for (const vuln of data.vulnerabilities ?? []) {
-      const dateAdded = new Date(vuln["dateAdded"] ?? "");
-      if (isNaN(dateAdded.getTime()) || dateAdded < thirtyDaysAgo) continue;
-      const vendor = (vuln["vendorProject"] ?? "").toLowerCase();
-      const product = (vuln["product"] ?? "").toLowerCase();
-      if (!vendor.includes(tech.toLowerCase()) && !product.includes(tech.toLowerCase())) continue;
-      results.push({
-        id: vuln["cveID"] ?? `CISA-${Date.now()}`,
-        tech,
-        desc: vuln["shortDescription"] ?? "Sem descrição disponível.",
-        solution: vuln["requiredAction"] ?? "Aplicar correção conforme orientação do fabricante.",
-        cvss: "N/D (Exploração Ativa)",
-        source: "CISA KEV",
-      });
+  await previous;
+  const waitMs = Math.max(0, nvdNextRequestAt - Date.now());
+  if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
+  nvdNextRequestAt = Date.now() + intervalMs;
+  release();
+}
+
+export async function getCisaKevFeed(): Promise<CisaKevItem[]> {
+  if (cisaCache && cisaCache.expiresAt > Date.now()) return cisaCache.items;
+  if (cisaPromise) return cisaPromise;
+
+  cisaPromise = (async () => {
+    try {
+      const resp = await fetchWithTimeout(CISA_URL, {}, 15000);
+      if (!resp.ok) throw new Error(`CISA KEV HTTP ${resp.status}`);
+      const data = (await resp.json()) as { vulnerabilities?: CisaKevItem[] };
+      const items = data.vulnerabilities ?? [];
+      cisaCache = { expiresAt: Date.now() + CISA_CACHE_TTL_MS, items };
+      return items;
+    } catch (err) {
+      logger.warn({ err }, "CISA KEV feed fetch failed");
+      return cisaCache?.items ?? [];
+    } finally {
+      cisaPromise = null;
     }
-  } catch (err) {
-    logger.warn({ err, tech }, "CISA KEV fetch failed");
+  })();
+
+  return cisaPromise;
+}
+
+export async function searchCisaKev(
+  tech: string,
+  options: ScanQueryOptions,
+): Promise<CveResult[]> {
+  const results: CveResult[] = [];
+  const feed = await getCisaKevFeed();
+  const { start, end } = parseDateRange(options.startDate, options.endDate);
+  const terms = technologySearchTerms(tech);
+
+  for (const vuln of feed) {
+    const dateAdded = new Date(`${vuln.dateAdded ?? ""}T00:00:00.000Z`);
+    if (Number.isNaN(dateAdded.getTime()) || dateAdded < start || dateAdded > end) continue;
+
+    const haystack = `${vuln.vendorProject ?? ""} ${vuln.product ?? ""} ${vuln.vulnerabilityName ?? ""}`.toLowerCase();
+    if (!terms.some((term) => haystack.includes(term))) continue;
+
+    results.push({
+      id: vuln.cveID ?? `CISA-${Date.now()}`,
+      tech,
+      desc: vuln.shortDescription ?? "Sem descrição disponível.",
+      solution: vuln.requiredAction ?? "Aplicar correção conforme orientação do fabricante.",
+      cvss: "N/D (Exploração Ativa)",
+      source: "CISA KEV",
+    });
   }
+
   return results;
 }
 
+const OSV_SKIP_TECHS = new Set([
+  "fortigate", "fortimanager", "fortianalyzer", "forticlient ems",
+  "cisco secure email", "senhasegura pam", "f5 big-ip", "aws",
+  "openshift", "vmware", "kaspersky", "mcafee", "trellix",
+  "openvpn", "zabbix", "pulse secure", "windows", "linux kernel",
+  "microsoft sql server", "microsoft edge", "microsoft office",
+  "adobe acrobat", "adobe photoshop", "autocad", "cribl stream",
+]);
+
 export async function searchOsvDev(tech: string): Promise<CveResult[]> {
-  const url = "https://api.osv.dev/v1/query";
+  if (OSV_SKIP_TECHS.has(tech.toLowerCase())) return [];
+
   const results: CveResult[] = [];
   try {
-    const resp = await fetchWithTimeout(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        package: {
-          name: tech.toLowerCase(),
-          ecosystem: "npm",
-        },
-      }),
-    });
+    const resp = await fetchWithTimeout(
+      "https://api.osv.dev/v1/query",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ package: { name: normalizeOsvPackageName(tech) } }),
+      },
+      8000,
+    );
     if (!resp.ok) return results;
-    const data = await resp.json() as { vulns?: Record<string, string>[] };
-    for (const vuln of (data.vulns ?? []).slice(0, 2)) {
+
+    const data = (await resp.json()) as {
+      vulns?: Array<{ id?: string; details?: string; summary?: string }>;
+    };
+    for (const vuln of (data.vulns ?? []).slice(0, 4)) {
       results.push({
-        id: vuln["id"] ?? "OSV-VULN",
+        id: vuln.id ?? "OSV-VULN",
         tech,
-        desc: vuln["details"] ?? vuln["summary"] ?? "Detalhes técnicos fornecidos na base OSV.",
-        solution: "Atualizar biblioteca/pacote afetado no repositório.",
+        desc: vuln.details ?? vuln.summary ?? "Detalhes técnicos fornecidos na base OSV.",
+        solution: "Atualizar o pacote afetado conforme o advisory do projeto.",
         cvss: "N/D",
-        source: "OSV.dev (Open Source)",
+        source: "OSV.dev",
       });
     }
   } catch (err) {
@@ -83,36 +195,38 @@ export async function searchOsvDev(tech: string): Promise<CveResult[]> {
 }
 
 export async function searchCircl(tech: string): Promise<CveResult[]> {
-  const url = `https://cve.circl.lu/api/vulnerability/fulltext?q=${encodeURIComponent(tech.toLowerCase())}`;
+  const query = technologySearchTerms(tech)[0] ?? tech.toLowerCase();
   const results: CveResult[] = [];
   try {
-    const resp = await fetchWithTimeout(url, {
-      headers: { Accept: "application/json" },
-    });
+    const resp = await fetchWithTimeout(
+      `https://cve.circl.lu/api/vulnerability/fulltext?q=${encodeURIComponent(query)}`,
+      { headers: { Accept: "application/json" } },
+      9000,
+    );
     if (!resp.ok) return results;
-    const data = await resp.json() as {
+
+    const data = (await resp.json()) as {
       data?: Array<{
         cveMetadata?: { cveId?: string };
-        containers?: {
-          cna?: {
-            descriptions?: Array<{ lang?: string; value?: string }>;
-            affected?: Array<{ vendor?: string; product?: string }>;
-          };
-        };
+        containers?: { cna?: { descriptions?: Array<{ lang?: string; value?: string }> } };
       }>;
     };
-    for (const vuln of (data.data ?? []).slice(0, 2)) {
-      const cveId = String(vuln.cveMetadata?.cveId ?? "");
-      const description = vuln.containers?.cna?.descriptions?.find((d) => d.lang === "en")?.value
-        ?? vuln.containers?.cna?.descriptions?.[0]?.value
+
+    for (const vuln of (data.data ?? []).slice(0, 4)) {
+      const descriptions = vuln.containers?.cna?.descriptions ?? [];
+      const description =
+        descriptions.find((d) => d.lang === "pt-BR" || d.lang === "pt")?.value
+        ?? descriptions.find((d) => d.lang === "en")?.value
+        ?? descriptions[0]?.value
         ?? "Sem descrição disponível.";
+
       results.push({
-        id: cveId || `CIRCL-${Date.now()}`,
+        id: String(vuln.cveMetadata?.cveId ?? `CIRCL-${Date.now()}`),
         tech,
-        desc: String(description),
-        solution: "Verificar boletins do fabricante.",
+        desc: description,
+        solution: "Verificar o advisory oficial do fabricante.",
         cvss: "N/D",
-        source: "CIRCL Vulnerability Fulltext",
+        source: "CIRCL / CVE",
       });
     }
   } catch (err) {
@@ -121,42 +235,58 @@ export async function searchCircl(tech: string): Promise<CveResult[]> {
   return results;
 }
 
-export async function searchNvd(tech: string): Promise<CveResult[]> {
+export async function searchNvd(
+  tech: string,
+  options: ScanQueryOptions,
+): Promise<CveResult[]> {
   const results: CveResult[] = [];
   try {
-    const hoje = new Date();
-    const inicio = new Date();
-    inicio.setDate(inicio.getDate() - 7);
+    const { start, end } = parseDateRange(options.startDate, options.endDate);
     const params = new URLSearchParams({
-      pubStartDate: inicio.toISOString().replace(/\.\d{3}Z$/, ".000Z"),
-      pubEndDate: hoje.toISOString().replace(/\.\d{3}Z$/, ".000Z"),
+      pubStartDate: start.toISOString().replace(/\.\d{3}Z$/, ".000Z"),
+      pubEndDate: end.toISOString().replace(/\.\d{3}Z$/, ".000Z"),
       keywordSearch: tech,
-      resultsPerPage: "2",
+      resultsPerPage: String(NVD_RESULTS_PER_TECH),
     });
-    // NVD rate-limit: 6s delay between requests if no API key
-    await new Promise((r) => setTimeout(r, 6000));
-    const resp = await fetchWithTimeout(`https://services.nvd.nist.gov/rest/json/cves/2.0?${params}`, {}, 20000);
-    if (!resp.ok) return results;
-    const data = await resp.json() as { vulnerabilities?: { cve: Record<string, unknown> }[] };
+
+    await waitForNvdSlot();
+
+    const headers: Record<string, string> = {
+      Accept: "application/json",
+      "User-Agent": "DeepSearch-SOC/12.0",
+    };
+    if (NVD_API_KEY) headers.apiKey = NVD_API_KEY;
+
+    const resp = await fetchWithTimeout(
+      `https://services.nvd.nist.gov/rest/json/cves/2.0?${params}`,
+      { headers },
+      25000,
+    );
+
+    if (!resp.ok) {
+      logger.warn({ tech, status: resp.status }, "NVD request returned non-OK status");
+      return results;
+    }
+
+    const data = (await resp.json()) as {
+      vulnerabilities?: Array<{ cve: Record<string, unknown> }>;
+    };
+
     for (const item of data.vulnerabilities ?? []) {
       const cve = item.cve;
-      const metrics = cve["metrics"] as Record<string, unknown> | undefined;
-      let cvss = "N/D";
-      if (metrics && metrics["cvssMetricV31"]) {
-        const m = (metrics["cvssMetricV31"] as { cvssData?: { baseScore?: number } }[])[0];
-        if (m?.cvssData?.baseScore != null) cvss = String(m.cvssData.baseScore);
-      } else if (metrics && metrics["cvssMetricV30"]) {
-        const m = (metrics["cvssMetricV30"] as { cvssData?: { baseScore?: number } }[])[0];
-        if (m?.cvssData?.baseScore != null) cvss = String(m.cvssData.baseScore);
-      }
-      const descriptions = cve["descriptions"] as { lang: string; value: string }[] | undefined;
-      const desc = descriptions?.find((d) => d.lang === "en")?.value ?? "Sem descrição disponível.";
+      const descriptions = cve["descriptions"] as Array<{ lang?: string; value?: string }> | undefined;
+      const desc =
+        descriptions?.find((d) => d.lang === "pt-BR" || d.lang === "pt")?.value
+        ?? descriptions?.find((d) => d.lang === "en")?.value
+        ?? descriptions?.[0]?.value
+        ?? "Sem descrição disponível.";
+
       results.push({
         id: String(cve["id"] ?? ""),
         tech,
         desc,
-        solution: "Aplicar atualizações de segurança fornecidas pelo fabricante ou rotacionar credenciais afetadas.",
-        cvss,
+        solution: "Aplicar as atualizações de segurança e mitigações publicadas pelo fabricante.",
+        cvss: extractNvdCvss(cve["metrics"]),
         source: "NVD / NIST",
       });
     }
@@ -166,82 +296,137 @@ export async function searchNvd(tech: string): Promise<CveResult[]> {
   return results;
 }
 
-export function generateTenableReport(vuln: {
-  cveId: string;
-  tech: string;
-  source: string;
-  description: string;
-  solution: string;
-  cvss: string;
-}): string {
-  const cvssFloat = parseFloat(vuln.cvss);
-  let severity = "Informativo";
-  let severityColor = "#2196f3";
-  if (vuln.cvss === "N/D (Exploração Ativa)" || cvssFloat >= 9.0) {
-    severity = "Crítico";
-    severityColor = "#e53935";
-  } else if (cvssFloat >= 7.0) {
-    severity = "Alto";
-    severityColor = "#f4511e";
-  } else if (cvssFloat >= 4.0) {
-    severity = "Médio";
-    severityColor = "#f9a825";
+export async function searchTechnology(
+  tech: string,
+  options: ScanQueryOptions,
+): Promise<CveResult[]> {
+  const selected = new Set(options.sources);
+  const tasks: Array<Promise<CveResult[]>> = [];
+
+  if (selected.has("cisa")) tasks.push(searchCisaKev(tech, options));
+  if (selected.has("nvd")) tasks.push(searchNvd(tech, options));
+  if (selected.has("circl")) tasks.push(searchCircl(tech));
+  if (selected.has("osv")) tasks.push(searchOsvDev(tech));
+
+  const settled = await Promise.allSettled(tasks);
+  const combined = settled.flatMap((result) =>
+    result.status === "fulfilled" ? result.value : [],
+  );
+  return mergeCveResults(combined);
+}
+
+export async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+
+  async function runWorker() {
+    while (true) {
+      const index = nextIndex++;
+      if (index >= items.length) return;
+      results[index] = await worker(items[index]!, index);
+    }
   }
 
-  return `
-<div style="font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #333; line-height: 1.5; max-width: 900px; margin: 20px auto; border: 1px solid #e0e0e0; padding: 30px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); background-color: #fff;">
-  <h1 style="font-size: 22px; color: #1a1a1a; border-bottom: 1px solid #eaeaea; padding-bottom: 15px; margin-top: 0;">
-    Relatório de Vulnerabilidade — Tenable One
-  </h1>
+  const workerCount = Math.min(Math.max(1, concurrency), items.length || 1);
+  await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+  return results;
+}
 
-  <div style="background-color: #eaffea; border-left: 4px solid #00d282; padding: 12px 15px; margin: 20px 0; font-size: 13px;">
-    <strong>Fonte:</strong> ${vuln.source} &mdash; Este relatório é gerado automaticamente a partir de bases públicas de inteligência de ameaças.
-  </div>
+function mergeCveResults(results: CveResult[]): CveResult[] {
+  const merged = new Map<string, CveResult>();
 
-  <div style="margin: 30px 0; padding: 20px; border: 1px solid #dcdcdc; border-radius: 4px; background-color: #fbfbfb;">
-    <h2 style="font-size: 18px; margin-top: 0; color: #005a8c;">
-      ${vuln.cveId} — ${vuln.tech}
-    </h2>
-    <table style="width: 100%; font-size: 14px; border-collapse: collapse;">
-      <tr>
-        <td style="padding: 8px 0; width: 200px; color: #555; font-weight: bold;">Identificador:</td>
-        <td style="padding: 8px 0;">${vuln.cveId}</td>
-      </tr>
-      <tr style="background-color: #f9f9f9;">
-        <td style="padding: 8px; color: #555; font-weight: bold;">Tecnologia Afetada:</td>
-        <td style="padding: 8px;">${vuln.tech}</td>
-      </tr>
-      <tr>
-        <td style="padding: 8px 0; color: #555; font-weight: bold;">Fonte de Inteligência:</td>
-        <td style="padding: 8px 0;">${vuln.source}</td>
-      </tr>
-      <tr style="background-color: #f9f9f9;">
-        <td style="padding: 8px; color: #555; font-weight: bold;">Base Score CVSSv3:</td>
-        <td style="padding: 8px;">
-          <span style="background-color: ${severityColor}; color: #fff; padding: 2px 10px; border-radius: 3px; font-weight: bold; font-size: 13px;">
-            ${vuln.cvss} — ${severity}
-          </span>
-        </td>
-      </tr>
-    </table>
-  </div>
+  for (const current of results) {
+    if (!current.id) continue;
+    const key = current.id.toUpperCase();
+    const previous = merged.get(key);
+    if (!previous) {
+      merged.set(key, { ...current, id: key });
+      continue;
+    }
 
-  <div style="margin: 20px 0;">
-    <h3 style="font-size: 15px; color: #1a2228; margin-bottom: 8px;">Descrição</h3>
-    <p style="font-size: 14px; background-color: #f4f8fd; border-left: 4px solid #007bc1; padding: 12px 15px; margin: 0;">${vuln.description}</p>
-  </div>
+    const previousNumeric = numericCvss(previous.cvss);
+    const currentNumeric = numericCvss(current.cvss);
+    const preferCurrentDescription = current.source.includes("NVD") || current.desc.length > previous.desc.length;
 
-  <div style="margin: 20px 0;">
-    <h3 style="font-size: 15px; color: #1a2228; margin-bottom: 8px;">Mitigação Recomendada</h3>
-    <p style="font-size: 14px; background-color: #f9fff9; border-left: 4px solid #00d282; padding: 12px 15px; margin: 0;">${vuln.solution}</p>
-  </div>
+    merged.set(key, {
+      ...previous,
+      desc: preferCurrentDescription ? current.desc : previous.desc,
+      solution: current.source.includes("CISA") ? current.solution : previous.solution,
+      cvss:
+        currentNumeric !== null && (previousNumeric === null || currentNumeric > previousNumeric)
+          ? current.cvss
+          : previous.cvss,
+      source: Array.from(new Set([...previous.source.split(" + "), ...current.source.split(" + ")])).join(" + "),
+    });
+  }
 
-  <hr style="border: 0; border-top: 1px solid #eaeaea; margin: 30px 0;">
+  return [...merged.values()];
+}
 
-  <p style="font-size: 12px; color: #888;">
-    Relatório gerado em ${new Date().toLocaleString("pt-BR")} via Deep Research de Vulnerabilidades.
-    Para mais informações, consulte os boletins oficiais do fabricante e as bases CVE/NVD.
-  </p>
-</div>
-`.trim();
+function parseDateRange(startDate: string, endDate: string): { start: Date; end: Date } {
+  const start = new Date(`${startDate}T00:00:00.000Z`);
+  const end = new Date(`${endDate}T23:59:59.999Z`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) {
+    throw new Error("Período de consulta inválido");
+  }
+  return { start, end };
+}
+
+function extractNvdCvss(metricsValue: unknown): string {
+  const metrics = metricsValue as Record<string, unknown> | undefined;
+  if (!metrics) return "N/D";
+
+  for (const key of ["cvssMetricV40", "cvssMetricV31", "cvssMetricV30", "cvssMetricV2"]) {
+    const entries = metrics[key] as Array<{ cvssData?: { baseScore?: number } }> | undefined;
+    const score = entries?.[0]?.cvssData?.baseScore;
+    if (score !== undefined && score !== null) return String(score);
+  }
+  return "N/D";
+}
+
+function numericCvss(value: string): number | null {
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizeOsvPackageName(tech: string): string {
+  const aliases: Record<string, string> = {
+    "7-Zip": "7zip",
+    "Visual Studio Code": "vscode",
+    "JetBrains IDEs": "jetbrains",
+    "Mozilla Firefox": "firefox",
+    "Google Chrome": "chromium",
+  };
+  return aliases[tech] ?? tech.toLowerCase();
+}
+
+function technologySearchTerms(tech: string): string[] {
+  const aliases: Record<string, string[]> = {
+    FortiGate: ["fortigate", "fortios"],
+    FortiManager: ["fortimanager"],
+    FortiAnalyzer: ["fortianalyzer"],
+    "FortiClient EMS": ["forticlient ems", "forticlient"],
+    "Cisco Secure Email": ["cisco secure email", "email security appliance"],
+    "senhasegura PAM": ["senhasegura"],
+    "F5 BIG-IP": ["big-ip", "f5"],
+    OpenShift: ["openshift"],
+    VMware: ["vmware", "broadcom vmware"],
+    "Pulse Secure": ["pulse secure", "ivanti connect secure"],
+    Windows: ["microsoft windows", "windows"],
+    "Linux Kernel": ["linux kernel"],
+    "Microsoft SQL Server": ["sql server"],
+    "Google Chrome": ["chrome", "chromium"],
+    "Microsoft Edge": ["microsoft edge"],
+    "7-Zip": ["7-zip", "7zip"],
+    "Visual Studio Code": ["visual studio code", "vscode"],
+    "Node.js": ["node.js", "nodejs"],
+    "Microsoft Office": ["microsoft office"],
+    "Adobe Acrobat": ["adobe acrobat", "acrobat reader"],
+    "Cribl Stream": ["cribl stream"],
+  };
+  return (aliases[tech] ?? [tech]).map((term) => term.toLowerCase());
 }

@@ -1,6 +1,8 @@
 import { Router, type IRouter } from "express";
 import { pool } from "@workspace/db";
 import { HealthCheckResponse } from "@workspace/api-zod";
+import { getScannerConfig } from "../lib/scanner";
+import { getIntelligenceConfig } from "../lib/threat-intelligence";
 
 const router: IRouter = Router();
 
@@ -8,6 +10,16 @@ const router: IRouter = Router();
 router.get("/healthz", (_req, res) => {
   const data = HealthCheckResponse.parse({ status: "ok" });
   res.json(data);
+});
+
+
+// Exibe somente o estado das integrações, nunca os valores das chaves.
+router.get("/healthz/integrations", (_req, res) => {
+  res.json({
+    status: "ok",
+    scanner: getScannerConfig(),
+    intelligence: getIntelligenceConfig(),
+  });
 });
 
 // Readiness do banco: confirma DNS, TLS, autenticação e consulta SQL.

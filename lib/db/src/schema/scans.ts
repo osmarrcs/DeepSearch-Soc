@@ -4,10 +4,13 @@ import { z } from "zod/v4";
 
 export const scansTable = pgTable("scans", {
   id: serial("id").primaryKey(),
-  status: text("status").notNull().default("em_andamento"), // em_andamento | concluido | erro
+  status: text("status").notNull().default("em_andamento"),
   startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
   completedAt: timestamp("completed_at", { withTimezone: true }),
   technologies: jsonb("technologies").$type<string[]>().notNull().default([]),
+  sources: jsonb("sources").$type<string[]>().notNull().default(["nvd", "cisa"]),
+  periodStart: text("period_start"),
+  periodEnd: text("period_end"),
   totalFound: integer("total_found").notNull().default(0),
 });
 

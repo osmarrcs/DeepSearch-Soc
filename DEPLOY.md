@@ -1,166 +1,147 @@
-# DEPLOY — DeepSearch-Soc (Supabase + Render)
+# Deploy do DeepSearch SOC v12 — GitHub, Supabase e Render
 
-Zero-to-production em ~15 minutos. Segue **na ordem**.
+Execute na ordem abaixo.
 
----
+## 1. Substituir os arquivos no repositório local
 
-## PASSO 1 — Criar banco na Supabase (5 min, grátis)
+1. Extraia o ZIP desta versão.
+2. No GitHub Desktop, abra o repositório `DeepSearch-Soc`.
+3. Use **Repository → Show in Explorer**.
+4. Copie o conteúdo do ZIP para essa pasta, substituindo os arquivos existentes.
+5. Não apague a pasta oculta `.git`.
+6. Confirme que `artifacts`, `lib`, `render.yaml` e `package.json` estão diretamente na raiz.
+7. Faça `Commit to main` e depois `Push origin`.
 
-1. Vai em https://supabase.com/dashboard/projects → **New project**.
-2. Preenche:
-   - **Name:** `deepsearch-soc-prod`
-   - **Database password:** clica em **Generate a password** e **COPIA E SALVA** (aparece uma vez só)
-   - **Region:** a mais perto de você (ex: `South America (São Paulo)`)
-   - **Plan:** Free
-3. Aguarda ~2 min o projeto provisionar.
-4. Menu esquerdo → **Project Settings** (engrenagem) → **Database**.
-5. Rola até **Connection string** → aba **Transaction pooler** (porta **6543**).
-6. Copia a string. Vai estar tipo:
-   ```
-   postgresql://postgres.abcdefghijklmno:[YOUR-PASSWORD]@aws-0-sa-east-1.pooler.supabase.com:6543/postgres
-   ```
-7. **Substitui `[YOUR-PASSWORD]`** pela senha do passo 2 e **adiciona `?sslmode=require` no final**:
-   ```
-   postgresql://postgres.abcdefghijklmno:MinhaSenh4Aqui@aws-0-sa-east-1.pooler.supabase.com:6543/postgres?sslmode=require
-   ```
-8. **Guarda essa URL** — vai colar no Render no Passo 4. Chamamos ela de `DATABASE_URL`.
+## 2. Sincronizar o Blueprint
 
-> ⚠️ Usa o **Transaction pooler (6543)**, NÃO o Direct connection (5432). Render + pooler = sem estouro de conexão.
+Como os serviços estão marcados como **Blueprint managed**, alterações em `render.yaml` precisam ser sincronizadas pelo Blueprint.
 
----
+1. No Render, abra o Blueprint do projeto.
+2. Use a opção de sincronizar/aplicar a versão mais recente do `render.yaml`.
+3. Aguarde a atualização dos serviços `deepsearch-soc-prod-api` e `deepsearch-soc-prod-web`.
 
-## PASSO 2 — Rodar as migrations (2 min)
+As variáveis declaradas com `sync: false` mantêm o valor fora do Git e devem ser preenchidas no painel.
 
-Precisa criar as tabelas no banco. Faz local **uma vez**:
+## 3. Variáveis da API
 
-```bash
-# clona o repo existente
-git clone https://github.com/osmarrcs/DeepSearch-Soc.git
-cd DeepSearch-Soc
+No serviço `deepsearch-soc-prod-api`, confirme:
 
-# instala
-corepack enable
-pnpm install
-
-# roda migration apontando pro Supabase
-export DATABASE_URL="postgresql://postgres.abcdefghijklmno:MinhaSenh4Aqui@aws-0-sa-east-1.pooler.supabase.com:6543/postgres?sslmode=require"
-pnpm --filter @workspace/db push
+```text
+DATABASE_URL
+CORS_ORIGIN
+NVD_API_KEY
+GEMINI_API_KEY
+REDHAT_JFPE_TO
+REDHAT_TRF5_TO
+REDHAT_REPORT_CC
+MICROSOFT_REPORT_TO
+MICROSOFT_REPORT_CC
 ```
 
-Confirma quando pedir. Depois vai na Supabase → **Table Editor** e confere se as tabelas `scans` e `vulnerabilities` apareceram.
+Valores fixos fornecidos pelo Blueprint:
 
----
-
-## PASSO 3 — Subir código no GitHub (3 min)
-
-Repo já existe em: `https://github.com/osmarrcs/DeepSearch-Soc`
-
-Se você está enviando o código pela primeira vez (ou sobrescrevendo):
-```bash
-# dentro da pasta DeepSearch-Soc
-git init
-git add .
-git commit -m "initial commit" || true
-git branch -M main
-git remote add origin https://github.com/osmarrcs/DeepSearch-Soc.git
-# se o repo remoto já tiver histórico e você quiser forçar o conteúdo novo:
-git push -u origin main --force-with-lease
+```text
+GEMINI_MODEL=gemini-3.6-flash
+GEMINI_FALLBACK_MODEL=gemini-3.5-flash-lite
+SCAN_DAYS=3
+NVD_RESULTS_PER_TECH=10
+SCAN_TECH_CONCURRENCY=4
 ```
 
-> ⚠️ Use `--force-with-lease` só se o repo estiver vazio ou você quiser substituir o conteúdo atual. Se quiser preservar histórico, faça merge/pull antes.
+### NVD_API_KEY
 
----
+Cole somente a chave, sem aspas. Essa variável é a principal melhoria de velocidade quando várias tecnologias são selecionadas.
 
-## PASSO 4 — Deploy no Render (5 min)
+### GEMINI_API_KEY
 
-### 4.1 Cria os serviços via Blueprint
+Cole somente a chave. O Gemini não participa da varredura; ele é utilizado apenas ao gerar o boletim técnico por CVE.
 
-1. https://dashboard.render.com/select-repo?type=blueprint
-2. Conecta o repo `DeepSearch-Soc`.
-3. Render lê o `render.yaml` e mostra 2 serviços:
-   - `deepsearch-soc-prod-api` (Web Service)
-   - `deepsearch-soc-prod-web` (Static Site)
-4. Clica **Apply**.
+### Destinatários
 
-### 4.2 Preenche as env vars
+Use listas separadas por vírgula. Exemplo fictício:
 
-Ele vai pedir 3 valores:
-
-| Serviço | Variável | Valor |
-|---|---|---|
-| `deepsearch-soc-prod-api` | `DATABASE_URL` | a URL do Passo 1 (com senha e `?sslmode=require`) |
-| `deepsearch-soc-prod-api` | `CORS_ORIGIN` | **deixa em branco por enquanto** — volta depois |
-| `deepsearch-soc-prod-web` | `VITE_API_URL` | **deixa em branco por enquanto** — volta depois |
-
-Clica **Apply** de novo. Render começa o build (leva ~5 min).
-
-### 4.3 Descobre as URLs finais
-
-Quando os dois serviços ficarem **Live**, o Render mostra as URLs:
-- API: `https://deepsearch-soc-prod-api.onrender.com` (ou `-abcd` no fim se tiver conflito)
-- Web: `https://deepsearch-soc-prod-web.onrender.com`
-
-### 4.4 Preenche as URLs cruzadas
-
-Agora que você tem as URLs, volta e completa:
-
-**deepsearch-soc-prod-api** → Environment → edita:
-- `CORS_ORIGIN` = `https://deepsearch-soc-prod-web.onrender.com` (URL do web, **sem barra no final**)
-
-**deepsearch-soc-prod-web** → Environment → edita:
-- `VITE_API_URL` = `https://deepsearch-soc-prod-api.onrender.com` (URL da api, **sem barra no final**)
-
-Cada edição dispara um redeploy. Espera ficar **Live**.
-
----
-
-## PASSO 5 — Testar
-
-1. Abre `https://deepsearch-soc-prod-api.onrender.com/api/healthz` → deve retornar `{"ok":true}`.
-2. Abre `https://deepsearch-soc-prod-web.onrender.com` → dashboard carrega.
-3. Vai em **Scanner** → seleciona uma tech → **Iniciar Varredura** → aparece toast verde e vira status "em_andamento".
-
-Se qualquer um falhar, vai pro **Troubleshooting** embaixo.
-
-> Importante: nesta versão, o `render.yaml` roda `pnpm --filter @workspace/db db:bootstrap` antes de iniciar a API. Isso corrige automaticamente o schema do banco em produção, inclusive o campo `scans.technologies` que causava 500 no `POST /api/scans`.
-
----
-
-## Dev local
-
-```bash
-# .env na raiz OU exporta manualmente
-export DATABASE_URL="postgresql://...pooler.supabase.com:6543/postgres?sslmode=require"
-
-# terminal 1
-pnpm --filter @workspace/api-server dev
-
-# terminal 2
-pnpm --filter @workspace/cve-dashboard dev
+```text
+REDHAT_JFPE_TO=analista1@empresa.com,analista2@empresa.com
+REDHAT_TRF5_TO=atendimento@empresa.com
+REDHAT_REPORT_CC=soc@empresa.com
+MICROSOFT_REPORT_TO=infra@empresa.com
+MICROSOFT_REPORT_CC=soc@empresa.com
 ```
 
-Sem `VITE_API_URL` em dev, o Vite proxya `/api` pra `localhost:3000`.
+## 4. Variável do frontend
 
----
+No serviço `deepsearch-soc-prod-web`:
 
-## Troubleshooting
+```text
+VITE_API_URL=https://deepsearch-soc-prod-api.onrender.com
+```
 
-| Sintoma | Causa | Fix |
-|---|---|---|
-| Render build: `pnpm: not found` | `corepack` não ativou | já tá no `buildCommand`; se falhar, ativa Node 20+ no Render |
-| `password authentication failed` | senha errada ou `[YOUR-PASSWORD]` não substituído | volta no Passo 1.7 |
-| `self signed certificate` / `no pg_hba.conf entry` | faltou `?sslmode=require` na URL | adiciona no final da `DATABASE_URL` |
-| `too many connections` | usou porta 5432 (direct) | troca pra `6543` (pooler) no Passo 1.5 |
-| Dashboard chama API e dá CORS | `CORS_ORIGIN` errado ou com barra final | copia exato: `https://xxx.onrender.com` |
-| Dashboard mostra tela em branco | `VITE_API_URL` não setado no build | seta no `deepsearch-soc-prod-web` e força redeploy (build-time var) |
-| `drizzle-kit push` falha `__dirname is not defined` | versão antiga do arquivo | já corrigido nesse repo |
-| `POST /api/scans` retorna 500 com `insert into "scans"` e `technologies` | banco antigo com tipo incompatível no campo `scans.technologies` | faça deploy desta versão; a API roda `db:bootstrap` no start e converte o campo sem apagar dados |
-| API dorme depois de 15min | Render free spin-down | normal; primeira request depois demora ~30s |
+Não acrescente `/api` e não coloque barra no final.
 
----
+Depois de alterar `VITE_API_URL`, faça novo build do frontend com limpeza do cache.
 
-## Rotacionar senha do banco (se vazar)
+## 5. Conexão Supabase
 
-1. Supabase → Settings → Database → **Reset database password**
-2. Copia nova URL com nova senha
-3. Render → `deepsearch-soc-prod-api` → Environment → atualiza `DATABASE_URL` → salva (redeploy automático)
+Use a URI do Transaction Pooler, porta `6543`:
+
+```text
+postgresql://postgres.PROJECT_REF:SENHA@HOST_POOLER.supabase.com:6543/postgres
+```
+
+O código remove parâmetros SSL conflitantes da URI e configura TLS no driver PostgreSQL.
+
+## 6. Conferir o deploy da API
+
+Os logs esperados são:
+
+```text
+[db] connection established
+[db] bootstrap complete
+Server listening
+```
+
+Teste:
+
+```text
+/api/healthz
+/api/healthz/db
+/api/healthz/integrations
+/api/stats
+```
+
+`/api/healthz/integrations` mostra apenas se as chaves foram configuradas; nunca exibe os valores.
+
+## 7. Testar a varredura
+
+1. Abra **Varredura**.
+2. Selecione data inicial e final.
+3. Deixe **NVD + CISA KEV** marcadas.
+4. Selecione uma ou mais tecnologias.
+5. Inicie e acompanhe em **Histórico**.
+
+Se aparecer o aviso `NVD_API_KEY não configurada`, volte às variáveis da API e cadastre a chave.
+
+## 8. Testar os relatórios
+
+### Boletim por CVE
+
+1. Faça uma varredura.
+2. Abra **Boletim por CVE**.
+3. Selecione a vulnerabilidade.
+4. Clique em **Gerar boletim**.
+
+### Red Hat
+
+1. Abra **Red Hat**.
+2. Selecione o período.
+3. Gere o relatório.
+4. Copie ou baixe o HTML.
+
+### Patch Tuesday
+
+1. Abra **Patch Tuesday**.
+2. Selecione o mês ou intervalo.
+3. Gere o relatório.
+4. Copie ou baixe o HTML.
+
+As integrações Red Hat Security Data, MSRC/CVRF, CISA KEV, CVE/MITRE e EPSS não exigem variáveis adicionais nesta implementação.

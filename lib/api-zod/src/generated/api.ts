@@ -104,7 +104,7 @@ export const TriageVulnerabilityResponse = zod.object({
 
 
 /**
- * @summary Generate HTML report for a vulnerability (Tenable-style)
+ * @summary Generate a correlated Threat Intelligence report for a vulnerability
  */
 export const GetVulnerabilityReportParams = zod.object({
   "id": zod.coerce.number()
@@ -137,6 +137,9 @@ export const ListScansResponseItem = zod.object({
   "startedAt": zod.string(),
   "completedAt": zod.string().nullish(),
   "technologies": zod.array(zod.string()),
+  "sources": zod.array(zod.enum(['nvd', 'cisa', 'circl', 'osv'])).optional(),
+  "periodStart": zod.string().nullish(),
+  "periodEnd": zod.string().nullish(),
   "totalFound": zod.number()
 })
 export const ListScansResponse = zod.array(ListScansResponseItem)
@@ -149,7 +152,10 @@ export const ListScansResponse = zod.array(ListScansResponseItem)
 
 
 export const CreateScanBody = zod.object({
-  "technologies": zod.array(zod.string()).min(1)
+  "technologies": zod.array(zod.string()).min(1),
+  "startDate": zod.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  "endDate": zod.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  "sources": zod.array(zod.enum(['nvd', 'cisa', 'circl', 'osv'])).min(1).optional()
 })
 
 export const CreateScanResponse = zod.object({
@@ -158,6 +164,9 @@ export const CreateScanResponse = zod.object({
   "startedAt": zod.string(),
   "completedAt": zod.string().nullish(),
   "technologies": zod.array(zod.string()),
+  "sources": zod.array(zod.enum(['nvd', 'cisa', 'circl', 'osv'])).optional(),
+  "periodStart": zod.string().nullish(),
+  "periodEnd": zod.string().nullish(),
   "totalFound": zod.number()
 })
 
@@ -175,6 +184,9 @@ export const GetScanResponse = zod.object({
   "startedAt": zod.string(),
   "completedAt": zod.string().nullish(),
   "technologies": zod.array(zod.string()),
+  "sources": zod.array(zod.enum(['nvd', 'cisa', 'circl', 'osv'])).optional(),
+  "periodStart": zod.string().nullish(),
+  "periodEnd": zod.string().nullish(),
   "totalFound": zod.number()
 })
 

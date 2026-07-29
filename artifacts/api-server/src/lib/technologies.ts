@@ -4,39 +4,45 @@ export interface Technology {
   category: string;
 }
 
+// Prefira nomes de produtos reais. Termos amplos como "Network Devices" ou
+// "Cloud Platforms" geram resultados ruidosos e chamadas lentas na NVD.
 export const TECHNOLOGIES: Technology[] = [
-  // Infraestrutura
-  { id: "fortigate", name: "Fortigate", category: "Infraestrutura" },
-  { id: "fortinet-manager", name: "Fortinet Manager", category: "Infraestrutura" },
-  { id: "fortinet-analyser", name: "Fortinet Analyser", category: "Infraestrutura" },
-  { id: "fortinet-ems", name: "Fortinet EMS", category: "Infraestrutura" },
-  { id: "cisco-antispam", name: "Cisco Antispam", category: "Infraestrutura" },
-  { id: "senha-segura-pam", name: "Senha Segura PAM", category: "Infraestrutura" },
-  { id: "f5-bigip-waf", name: "F5 Big IP WAF", category: "Infraestrutura" },
-  { id: "aws", name: "AWS", category: "Infraestrutura" },
-  { id: "openshift", name: "Openshift", category: "Infraestrutura" },
-  { id: "microsoft", name: "Microsoft", category: "Infraestrutura" },
-  { id: "vmware", name: "VMware", category: "Infraestrutura" },
-  { id: "network-devices", name: "Network Devices", category: "Infraestrutura" },
-  { id: "operating-systems", name: "Operating Systems", category: "Infraestrutura" },
-  { id: "cloud-platforms", name: "Cloud Platforms", category: "Infraestrutura" },
-  { id: "virtualization-software", name: "Virtualization Software", category: "Infraestrutura" },
+  // Infraestrutura e Segurança
+  { id: "fortigate", name: "FortiGate", category: "Infraestrutura e Segurança" },
+  { id: "fortimanager", name: "FortiManager", category: "Infraestrutura e Segurança" },
+  { id: "fortianalyzer", name: "FortiAnalyzer", category: "Infraestrutura e Segurança" },
+  { id: "forticlient-ems", name: "FortiClient EMS", category: "Infraestrutura e Segurança" },
+  { id: "cisco-secure-email", name: "Cisco Secure Email", category: "Infraestrutura e Segurança" },
+  { id: "senhasegura-pam", name: "senhasegura PAM", category: "Infraestrutura e Segurança" },
+  { id: "f5-bigip", name: "F5 BIG-IP", category: "Infraestrutura e Segurança" },
+  { id: "aws", name: "AWS", category: "Infraestrutura e Segurança" },
+  { id: "openshift", name: "OpenShift", category: "Infraestrutura e Segurança" },
+  { id: "vmware", name: "VMware", category: "Infraestrutura e Segurança" },
+  { id: "kaspersky", name: "Kaspersky", category: "Infraestrutura e Segurança" },
+  { id: "mcafee", name: "McAfee", category: "Infraestrutura e Segurança" },
+  { id: "trellix", name: "Trellix", category: "Infraestrutura e Segurança" },
+  { id: "openvpn", name: "OpenVPN", category: "Infraestrutura e Segurança" },
+  { id: "zabbix", name: "Zabbix", category: "Infraestrutura e Segurança" },
+  { id: "pulse-secure", name: "Pulse Secure", category: "Infraestrutura e Segurança" },
 
-  // Sistemas de Produção
-  { id: "git", name: "Git", category: "Sistemas de Produção" },
-  { id: "ansible", name: "Ansible", category: "Sistemas de Produção" },
-  { id: "kubernetes", name: "Kubernetes", category: "Sistemas de Produção" },
-  { id: "cicd-tools", name: "CI/CD Tools", category: "Sistemas de Produção" },
-  { id: "containers", name: "Containers", category: "Sistemas de Produção" },
-  { id: "orchestration-platforms", name: "Orchestration Platforms", category: "Sistemas de Produção" },
+  // Sistemas e Produção
+  { id: "windows", name: "Windows", category: "Sistemas e Produção" },
+  { id: "linux-kernel", name: "Linux Kernel", category: "Sistemas e Produção" },
+  { id: "kubernetes", name: "Kubernetes", category: "Sistemas e Produção" },
+  { id: "docker", name: "Docker", category: "Sistemas e Produção" },
+  { id: "ansible", name: "Ansible", category: "Sistemas e Produção" },
+  { id: "git", name: "Git", category: "Sistemas e Produção" },
+  { id: "cicd-tools", name: "CI/CD Tools", category: "Sistemas e Produção" },
 
   // Banco de Dados
   { id: "oracle", name: "Oracle", category: "Banco de Dados" },
   { id: "postgresql", name: "PostgreSQL", category: "Banco de Dados" },
   { id: "mysql", name: "MySQL", category: "Banco de Dados" },
-  { id: "sql-server", name: "SQL Server", category: "Banco de Dados" },
+  { id: "sql-server", name: "Microsoft SQL Server", category: "Banco de Dados" },
   { id: "mongodb", name: "MongoDB", category: "Banco de Dados" },
   { id: "redis", name: "Redis", category: "Banco de Dados" },
+  { id: "firebird", name: "Firebird", category: "Banco de Dados" },
+  { id: "interbase", name: "InterBase", category: "Banco de Dados" },
 
   // Navegadores
   { id: "google-chrome", name: "Google Chrome", category: "Navegadores" },
@@ -46,17 +52,20 @@ export const TECHNOLOGIES: Technology[] = [
   { id: "brave", name: "Brave", category: "Navegadores" },
   { id: "opera", name: "Opera", category: "Navegadores" },
 
-  // Aplicações / Desenvolvimento
-  { id: "winzip", name: "WinZip", category: "Aplicações / Desenvolvimento" },
-  { id: "7zip", name: "7-Zip", category: "Aplicações / Desenvolvimento" },
-  { id: "obs-studio", name: "OBS Studio", category: "Aplicações / Desenvolvimento" },
-  { id: "docker", name: "Docker", category: "Aplicações / Desenvolvimento" },
-  { id: "vscode", name: "Visual Studio Code", category: "Aplicações / Desenvolvimento" },
-  { id: "jetbrains", name: "JetBrains IDEs", category: "Aplicações / Desenvolvimento" },
-  { id: "npm", name: "npm", category: "Aplicações / Desenvolvimento" },
-  { id: "python", name: "Python Packages", category: "Aplicações / Desenvolvimento" },
-  { id: "dev-tools", name: "Development Tools", category: "Aplicações / Desenvolvimento" },
-  { id: "productivity-software", name: "Productivity Software", category: "Aplicações / Desenvolvimento" },
-  { id: "file-archivers", name: "File Archivers", category: "Aplicações / Desenvolvimento" },
-  { id: "streaming-software", name: "Streaming Software", category: "Aplicações / Desenvolvimento" },
+  // Aplicações e Desenvolvimento
+  { id: "7zip", name: "7-Zip", category: "Aplicações e Desenvolvimento" },
+  { id: "winrar", name: "WinRAR", category: "Aplicações e Desenvolvimento" },
+  { id: "winzip", name: "WinZip", category: "Aplicações e Desenvolvimento" },
+  { id: "obs-studio", name: "OBS Studio", category: "Aplicações e Desenvolvimento" },
+  { id: "vscode", name: "Visual Studio Code", category: "Aplicações e Desenvolvimento" },
+  { id: "jetbrains", name: "JetBrains IDEs", category: "Aplicações e Desenvolvimento" },
+  { id: "python", name: "Python", category: "Aplicações e Desenvolvimento" },
+  { id: "java", name: "Java", category: "Aplicações e Desenvolvimento" },
+  { id: "nodejs", name: "Node.js", category: "Aplicações e Desenvolvimento" },
+  { id: "microsoft-office", name: "Microsoft Office", category: "Aplicações e Desenvolvimento" },
+  { id: "libreoffice", name: "LibreOffice", category: "Aplicações e Desenvolvimento" },
+  { id: "adobe-acrobat", name: "Adobe Acrobat", category: "Aplicações e Desenvolvimento" },
+  { id: "adobe-photoshop", name: "Adobe Photoshop", category: "Aplicações e Desenvolvimento" },
+  { id: "autocad", name: "AutoCAD", category: "Aplicações e Desenvolvimento" },
+  { id: "cribl-stream", name: "Cribl Stream", category: "Aplicações e Desenvolvimento" },
 ];
